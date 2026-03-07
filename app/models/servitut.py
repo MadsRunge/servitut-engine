@@ -22,6 +22,7 @@ class Servitut(BaseModel):
     legal_type: Optional[str] = None  # offentlig | privatretlig
     relevance_for_property: Optional[str] = None
     construction_relevance: bool = False
+    byggeri_markering: Optional[str] = None  # sort | orange | rød
     action_note: Optional[str] = None
     confidence: float = 0.0
     evidence: List[Evidence] = Field(default_factory=list)

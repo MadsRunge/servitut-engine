@@ -7,37 +7,46 @@ import streamlit as st
 
 from app.services import case_service, storage_service
 from app.services.report_service import generate_report
+from streamlit_app.ui import (
+    render_case_banner,
+    render_case_stats,
+    render_empty_state,
+    render_section,
+    select_case,
+    setup_page,
+)
 
-st.set_page_config(page_title="Generer Rapport", layout="wide")
-st.title("Generer Servitutredegørelse")
+setup_page(
+    "Generer redegørelse",
+    "Saml de udtrukne servitutter i en læsbar rapport med sporbarhed til chunks og OCR-tekst.",
+    step="report",
+)
 
-cases = case_service.list_cases()
-if not cases:
-    st.warning("Ingen cases.")
-    st.stop()
+case = select_case()
+render_case_banner(case)
+render_case_stats(case.case_id)
 
-case_options = {f"{c.name} ({c.case_id})": c.case_id for c in cases}
-selected_label = st.selectbox("Vælg case", list(case_options.keys()))
-case_id = case_options[selected_label]
+servitutter = storage_service.list_servitutter(case.case_id)
+render_section("Rapportgrundlag", f"{len(servitutter)} servitut(ter) er klar til rapportgenerering.")
 
-servitutter = storage_service.list_servitutter(case_id)
-st.info(f"{len(servitutter)} servitutter klar til rapport")
-
-if st.button("Generer rapport (Claude API)", type="primary"):
+if st.button("Generer rapport", type="primary"):
     if not servitutter:
         st.error("Ingen servitutter — kør ekstraktion først.")
     else:
-        all_chunks = storage_service.load_all_chunks(case_id)
+        all_chunks = storage_service.load_all_chunks(case.case_id)
         with st.spinner("Genererer rapport..."):
             try:
-                report = generate_report(servitutter, all_chunks, case_id)
+                report = generate_report(servitutter, all_chunks, case.case_id)
                 storage_service.save_report(report)
                 st.success(f"Rapport genereret: `{report.report_id}`")
+                st.rerun()
             except Exception as e:
                 st.error(f"Fejl: {e}")
 
-st.divider()
-reports = storage_service.list_reports(case_id)
+render_section("Gemte rapporter", "Tidligere redegørelser for den aktive sag.")
+reports = storage_service.list_reports(case.case_id)
+if not reports:
+    render_empty_state("Ingen rapporter endnu", "Generér den første redegørelse, når servitutterne er gennemgået.")
 for report in reports:
     with st.expander(f"Rapport `{report.report_id}` — {report.created_at}"):
         if report.notes:

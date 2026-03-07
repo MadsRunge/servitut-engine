@@ -6,31 +6,36 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from app.services import case_service, storage_service
+from streamlit_app.ui import (
+    render_case_banner,
+    render_case_stats,
+    render_empty_state,
+    render_section,
+    select_case,
+    select_document,
+    setup_page,
+)
 
-st.set_page_config(page_title="Inspicér chunks", layout="wide")
-st.title("Inspicér chunks")
+setup_page(
+    "Inspicér chunks",
+    "Kontrollér chunk-størrelse, sidesporing og tekstfordeling før den strukturerede ekstraktion kaldes.",
+    step="chunks",
+)
 
-cases = case_service.list_cases()
-if not cases:
-    st.warning("Ingen cases.")
-    st.stop()
+case = select_case()
+render_case_banner(case)
+render_case_stats(case.case_id)
 
-case_options = {f"{c.name} ({c.case_id})": c.case_id for c in cases}
-selected_label = st.selectbox("Vælg case", list(case_options.keys()))
-case_id = case_options[selected_label]
-
-docs = storage_service.list_documents(case_id)
+docs = storage_service.list_documents(case.case_id)
 if not docs:
-    st.warning("Ingen dokumenter.")
+    render_empty_state("Ingen dokumenter", "Upload dokumenter og kør OCR før chunk-inspektion.")
     st.stop()
 
-doc_options = {f"{d.filename} ({d.document_id})": d.document_id for d in docs}
-selected_doc_label = st.selectbox("Vælg dokument", list(doc_options.keys()))
-doc_id = doc_options[selected_doc_label]
-
-chunks = storage_service.load_chunks(case_id, doc_id)
+render_section("Dokument og filtrering", "Brug sidefilter til hurtig kontrol af enkelte sider.")
+doc = select_document(case.case_id, docs)
+chunks = storage_service.load_chunks(case.case_id, doc.document_id)
 if not chunks:
-    st.info("Ingen chunks for dette dokument. Kør OCR først.")
+    render_empty_state("Ingen chunks endnu", "Kør OCR for dokumentet først.")
     st.stop()
 
 page_filter = st.selectbox(
@@ -39,9 +44,9 @@ page_filter = st.selectbox(
 )
 
 filtered = chunks if page_filter == "Alle" else [c for c in chunks if str(c.page) == page_filter]
-st.markdown(f"**{len(filtered)} chunks**")
+render_section("Chunk-liste", f"{len(filtered)} chunk(s) matcher det aktive filter.")
 
 for chunk in filtered:
     with st.expander(f"Chunk {chunk.chunk_index} | Side {chunk.page} | `{chunk.chunk_id}`"):
-        st.text(chunk.text)
+        st.code(chunk.text, language="text")
         st.caption(f"Chars: {chunk.char_start}–{chunk.char_end} | Doc: {chunk.document_id}")

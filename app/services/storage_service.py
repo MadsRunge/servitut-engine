@@ -114,8 +114,9 @@ def list_documents(case_id: str) -> List[Document]:
         if json_exists(meta_path):
             try:
                 data = load_json(meta_path)
-                pages_path = doc_dir / "pages.json"
-                data["pages"] = load_json(pages_path) if json_exists(pages_path) else []
+                doc_id = data.get("document_id", doc_dir.name)
+                ocr_path = get_ocr_path(case_id, doc_id)
+                data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
                 docs.append(Document(**data))
             except Exception as e:
                 logger.warning(f"Could not load document from {doc_dir}: {e}")

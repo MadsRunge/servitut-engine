@@ -10,6 +10,10 @@ For hver servitut, returner et JSON-objekt med disse felter:
 - disposition_type: "rådighed" (begrænser hvad ejer må gøre) eller "tilstand" (krav om en bestemt tilstand). Brug null hvis uklart.
 - legal_type: "offentlig" (hjemlet i lov, tinglyst af myndighed) eller "privatretlig" (aftale mellem private). Brug null hvis uklart.
 - construction_relevance: true hvis servitutten kan have betydning for fremtidigt byggeri eller ombygning, false ellers.
+- byggeri_markering: Klassificér servituttens betydning for fremtidigt byggeri:
+    "rød"    — Servitutten har direkte betydning for placering af fremtidig bebyggelse (fx byggelinier, afstandskrav, højdebegrænsninger)
+    "orange" — Der skal tages stilling til servitutten (fx mulig aflysning, uafklaret omfang, ledninger der kan flyttes)
+    "sort"   — Servitutten vedrører ikke projektområdet eller har ingen byggerelevans
 - action_note: Anbefalet handling (fx "Kontakt Vejdirektoratet for evt. aflysning", "Ingen handling nødvendig", "Undersøg om servitutten er aflyst").
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket. 1.0 = meget sikker, 0.5 = usikker, 0.0 = gætteri.
 

@@ -6,23 +6,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from app.services import case_service, storage_service
+from streamlit_app.ui import (
+    render_case_banner,
+    render_case_stats,
+    render_empty_state,
+    render_section,
+    select_case,
+    setup_page,
+)
 
-st.set_page_config(page_title="Review & Sporbarhed", layout="wide")
-st.title("Review & Sporbarhed")
-st.markdown("Spor en servitut tilbage til kilde-side og OCR-tekst.")
+setup_page(
+    "Review og sporbarhed",
+    "Spor hver servitut tilbage til evidens, chunk og original side, så kvaliteten kan vurderes med fuld kontekst.",
+    step="review",
+)
 
-cases = case_service.list_cases()
-if not cases:
-    st.warning("Ingen cases.")
-    st.stop()
+case = select_case()
+render_case_banner(case)
+render_case_stats(case.case_id)
 
-case_options = {f"{c.name} ({c.case_id})": c.case_id for c in cases}
-selected_label = st.selectbox("Vælg case", list(case_options.keys()))
-case_id = case_options[selected_label]
-
-servitutter = storage_service.list_servitutter(case_id)
+servitutter = storage_service.list_servitutter(case.case_id)
 if not servitutter:
-    st.info("Ingen servitutter. Kør ekstraktion først.")
+    render_empty_state("Ingen servitutter", "Kør ekstraktion, før review og sporbarhed giver mening.")
     st.stop()
 
 srv_options = {
@@ -32,11 +37,12 @@ srv_options = {
 selected_srv_label = st.selectbox("Vælg servitut", list(srv_options.keys()))
 srv_id = srv_options[selected_srv_label]
 
-srv = storage_service.load_servitut(case_id, srv_id)
+srv = storage_service.load_servitut(case.case_id, srv_id)
 if not srv:
     st.error("Servitut ikke fundet.")
     st.stop()
 
+render_section("Servitutprofil", "Sammenfatning af det valgte fund før dyk ned i evidenskæden.")
 col1, col2 = st.columns([2, 1])
 with col1:
     st.subheader(srv.title or "Ukendt titel")
@@ -53,28 +59,27 @@ with col2:
     st.caption(f"ID: {srv.servitut_id}")
     st.caption(f"Kilde-dokument: {srv.source_document}")
 
-st.divider()
-st.subheader("Evidens — sporing til kilde")
+render_section("Evidenskæde", "Hver evidensblok viser excerpt, fuld chunk, OCR-tekst og original side.")
 
 if srv.evidence:
     for ev in srv.evidence:
         with st.expander(f"Side {ev.page} | Chunk `{ev.chunk_id}`"):
-            st.text(ev.text_excerpt)
+            st.code(ev.text_excerpt, language="text")
 
-            full_chunks = storage_service.load_chunks(case_id, ev.document_id)
+            full_chunks = storage_service.load_chunks(case.case_id, ev.document_id)
             full_chunk = next((c for c in full_chunks if c.chunk_id == ev.chunk_id), None)
             if full_chunk:
                 st.markdown("**Fuld chunk-tekst:**")
-                st.text(full_chunk.text)
+                st.code(full_chunk.text, language="text")
 
-            pages = storage_service.load_ocr_pages(case_id, ev.document_id)
+            pages = storage_service.load_ocr_pages(case.case_id, ev.document_id)
             page = next((p for p in pages if p.page_number == ev.page), None)
             if page:
                 st.markdown(f"**OCR-tekst side {page.page_number}** (conf={page.confidence:.2f}):")
-                st.text(page.text[:1500])
+                st.code(page.text[:1500], language="text")
 
                 # Render sidebillede on-demand fra original PDF
-                pdf_path = storage_service.get_document_pdf_path(case_id, ev.document_id)
+                pdf_path = storage_service.get_document_pdf_path(case.case_id, ev.document_id)
                 if pdf_path.exists():
                     try:
                         import fitz

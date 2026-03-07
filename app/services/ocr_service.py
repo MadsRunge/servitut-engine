@@ -45,11 +45,11 @@ def run_ocrmypdf(pdf_path: Path, ocr_pdf_path: Path) -> None:
 
     try:
         ocrmypdf.ocr(
-            input_file=str(pdf_path),
-            output_file=str(ocr_pdf_path),
+            str(pdf_path),
+            str(ocr_pdf_path),
             language=settings.OCR_LANGUAGE,
             deskew=settings.OCR_DESKEW,
-            skip_text=True,       # spring over sider der allerede har tekst
+            skip_text=True,
             progress_bar=False,
             jobs=1,
         )

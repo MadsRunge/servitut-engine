@@ -9,48 +9,96 @@ import streamlit as st
 from app.models.document import Document
 from app.services import case_service, storage_service
 from app.utils.ids import generate_doc_id
-
-st.set_page_config(page_title="Upload dokumenter", layout="wide")
-st.title("Upload PDF-dokumenter")
-
-cases = case_service.list_cases()
-if not cases:
-    st.warning("Ingen cases. Opret en case først.")
-    st.stop()
-
-case_options = {f"{c.name} ({c.case_id})": c.case_id for c in cases}
-selected_label = st.selectbox("Vælg case", list(case_options.keys()))
-case_id = case_options[selected_label]
-
-uploaded_files = st.file_uploader(
-    "Upload PDF-filer", type=["pdf"], accept_multiple_files=True
+from streamlit_app.ui import (
+    parse_status_label,
+    render_case_banner,
+    render_case_stats,
+    render_empty_state,
+    render_section,
+    select_case,
+    setup_page,
 )
 
-if uploaded_files and st.button("Upload valgte filer"):
-    for uploaded_file in uploaded_files:
-        doc_id = generate_doc_id()
-        pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+setup_page(
+    "Upload dokumenter",
+    "Tilføj PDF-akter til en sag. Upload tinglysningsattesten separat — den bruges som autoritativ kildeliste.",
+    step="upload",
+)
 
-        with open(pdf_path, "wb") as f:
-            shutil.copyfileobj(uploaded_file, f)
+case = select_case()
+render_case_banner(case)
+render_case_stats(case.case_id)
 
-        doc = Document(
-            document_id=doc_id,
-            case_id=case_id,
-            filename=uploaded_file.name,
-            file_path=str(pdf_path),
-            parse_status="pending",
-        )
-        storage_service.save_document(doc)
-        case_service.add_document_to_case(case_id, doc_id)
+
+def _save_uploaded_file(uploaded_file, case_id: str, document_type: str):
+    doc_id = generate_doc_id()
+    pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(pdf_path, "wb") as f:
+        shutil.copyfileobj(uploaded_file, f)
+    doc = Document(
+        document_id=doc_id,
+        case_id=case_id,
+        filename=uploaded_file.name,
+        file_path=str(pdf_path),
+        document_type=document_type,
+        parse_status="pending",
+    )
+    storage_service.save_document(doc)
+    case_service.add_document_to_case(case_id, doc_id)
+    return doc_id
+
+
+# --- Tinglysningsattest ---
+render_section(
+    "Tinglysningsattest",
+    "Upload tinglysningsattesten for ejendommen. Den bruges som autoritativ liste over hvilke servitutter der eksisterer.",
+)
+
+existing_docs = storage_service.list_documents(case.case_id)
+existing_attest = [d for d in existing_docs if d.document_type == "tinglysningsattest"]
+
+if existing_attest:
+    st.info(f"Tinglysningsattest allerede uploadet: **{existing_attest[0].filename}** (`{existing_attest[0].document_id}`)")
+    if st.checkbox("Erstat med ny tinglysningsattest"):
+        attest_file = st.file_uploader("Upload tinglysningsattest (PDF)", type=["pdf"], key="attest_upload")
+        if attest_file and st.button("Upload tinglysningsattest", key="attest_btn"):
+            doc_id = _save_uploaded_file(attest_file, case.case_id, "tinglysningsattest")
+            st.success(f"Uploadet: **{attest_file.name}** (`{doc_id}`)")
+            st.rerun()
+else:
+    attest_file = st.file_uploader("Upload tinglysningsattest (PDF)", type=["pdf"], key="attest_upload")
+    if attest_file and st.button("Upload tinglysningsattest", key="attest_btn", type="primary"):
+        doc_id = _save_uploaded_file(attest_file, case.case_id, "tinglysningsattest")
+        st.success(f"Uploadet: **{attest_file.name}** (`{doc_id}`)")
+        st.rerun()
+
+# --- Akter ---
+render_section(
+    "Akter",
+    "Upload de individuelle akt-PDFer. Disse bruges til at berige servitutterne med fulde detaljer.",
+)
+
+akt_files = st.file_uploader(
+    "Upload akter (PDF)", type=["pdf"], accept_multiple_files=True, key="akt_upload"
+)
+
+if akt_files and st.button("Upload valgte akter", key="akt_btn"):
+    for uploaded_file in akt_files:
+        doc_id = _save_uploaded_file(uploaded_file, case.case_id, "akt")
         st.success(f"Uploadet: **{uploaded_file.name}** (`{doc_id}`)")
+    st.rerun()
 
-st.divider()
-st.subheader("Eksisterende dokumenter")
-docs = storage_service.list_documents(case_id)
+# --- Dokumentbibliotek ---
+render_section("Dokumentbibliotek", "Oversigt over filer i den aktive sag og deres aktuelle pipeline-status.")
+docs = storage_service.list_documents(case.case_id)
 if docs:
     for doc in docs:
-        st.markdown(f"- `{doc.document_id}` **{doc.filename}** — status: `{doc.parse_status}`")
+        type_badge = "📋 Tinglysningsattest" if doc.document_type == "tinglysningsattest" else "📄 Akt"
+        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+        col1.markdown(f"**{doc.filename}**  \n`{doc.document_id}`")
+        col2.caption(type_badge)
+        col3.metric("Status", parse_status_label(doc.parse_status))
+        col4.metric("Sider", str(doc.page_count))
 else:
-    st.info("Ingen dokumenter uploadet endnu.")
+    render_empty_state("Ingen dokumenter endnu", "Upload tinglysningsattest og akter for at fortsætte til OCR.")

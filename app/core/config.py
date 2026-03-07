@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000
     CHUNK_OVERLAP: int = 200
+    EXTRACTION_MAX_CONCURRENCY: int = 4
     OCR_LANGUAGE: str = "dan+eng"
     OCR_DESKEW: bool = True
 
