@@ -21,6 +21,14 @@ def _doc_dir(case_id: str, doc_id: str) -> Path:
     return _case_dir(case_id) / "documents" / doc_id
 
 
+def get_page_images_dir(case_id: str, doc_id: str) -> Path:
+    return _case_dir(case_id) / "page_images" / doc_id
+
+
+def get_ocr_path(case_id: str, doc_id: str) -> Path:
+    return _case_dir(case_id) / "ocr" / f"{doc_id}_pages.json"
+
+
 # --- Case ---
 
 def save_case(case: Case) -> None:
@@ -64,26 +72,35 @@ def delete_case(case_id: str) -> bool:
 
 def save_document(doc: Document) -> None:
     path = _doc_dir(doc.case_id, doc.document_id) / "metadata.json"
-    # Save pages separately for readability
-    pages_path = _doc_dir(doc.case_id, doc.document_id) / "pages.json"
     doc_dict = doc.model_dump()
-    pages = doc_dict.pop("pages")
+    doc_dict.pop("pages")  # Pages stored separately in ocr/
     save_json(path, doc_dict)
-    save_json(pages_path, pages)
     logger.debug(f"Saved document {doc.document_id}")
 
 
 def load_document(case_id: str, doc_id: str) -> Optional[Document]:
     meta_path = _doc_dir(case_id, doc_id) / "metadata.json"
-    pages_path = _doc_dir(case_id, doc_id) / "pages.json"
     if not json_exists(meta_path):
         return None
     data = load_json(meta_path)
-    if json_exists(pages_path):
-        data["pages"] = load_json(pages_path)
-    else:
-        data["pages"] = []
+    ocr_path = get_ocr_path(case_id, doc_id)
+    data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
     return Document(**data)
+
+
+def save_ocr_pages(case_id: str, doc_id: str, pages: list) -> None:
+    path = get_ocr_path(case_id, doc_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_json(path, [p.model_dump() if hasattr(p, "model_dump") else p for p in pages])
+    logger.debug(f"Saved {len(pages)} OCR pages for doc {doc_id}")
+
+
+def load_ocr_pages(case_id: str, doc_id: str) -> list:
+    from app.models.document import PageData
+    path = get_ocr_path(case_id, doc_id)
+    if not json_exists(path):
+        return []
+    return [PageData(**p) for p in load_json(path)]
 
 
 def list_documents(case_id: str) -> List[Document]:
@@ -110,14 +127,19 @@ def get_document_pdf_path(case_id: str, doc_id: str) -> Path:
 
 # --- Chunks ---
 
+def _chunks_path(case_id: str, doc_id: str) -> Path:
+    return _case_dir(case_id) / "chunks" / f"{doc_id}_chunks.json"
+
+
 def save_chunks(case_id: str, doc_id: str, chunks: List[Chunk]) -> None:
-    path = _doc_dir(case_id, doc_id) / "chunks.json"
+    path = _chunks_path(case_id, doc_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
     save_json(path, [c.model_dump() for c in chunks])
     logger.debug(f"Saved {len(chunks)} chunks for doc {doc_id}")
 
 
 def load_chunks(case_id: str, doc_id: str) -> List[Chunk]:
-    path = _doc_dir(case_id, doc_id) / "chunks.json"
+    path = _chunks_path(case_id, doc_id)
     if not json_exists(path):
         return []
     return [Chunk(**c) for c in load_json(path)]

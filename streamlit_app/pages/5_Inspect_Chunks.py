@@ -7,8 +7,8 @@ import streamlit as st
 
 from app.services import case_service, storage_service
 
-st.set_page_config(page_title="Inspect Chunks", layout="wide")
-st.title("Inspect Chunks")
+st.set_page_config(page_title="Inspicér chunks", layout="wide")
+st.title("Inspicér chunks")
 
 cases = case_service.list_cases()
 if not cases:
@@ -30,7 +30,7 @@ doc_id = doc_options[selected_doc_label]
 
 chunks = storage_service.load_chunks(case_id, doc_id)
 if not chunks:
-    st.info("Ingen chunks for dette dokument. Parse dokumentet først.")
+    st.info("Ingen chunks for dette dokument. Kør OCR først.")
     st.stop()
 
 page_filter = st.selectbox(

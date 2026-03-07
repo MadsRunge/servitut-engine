@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -72,11 +72,8 @@ def test_report_fallback_on_api_error():
     servitutter = [make_mock_servitut(1), make_mock_servitut(2)]
     chunks = make_mock_chunks()
 
-    with patch("app.services.report_service._get_client") as mock_client_fn:
-        mock_client = MagicMock()
-        mock_client_fn.return_value = mock_client
-        mock_client.messages.create.side_effect = Exception("API unavailable")
-
+    with patch("app.services.report_service.generate_text") as mock_generate_text:
+        mock_generate_text.side_effect = Exception("API unavailable")
         report = generate_report(servitutter, chunks, "case-test")
 
     assert isinstance(report, Report)
@@ -90,13 +87,7 @@ def test_report_with_mock_api_response():
     servitutter = [make_mock_servitut(1)]
     chunks = make_mock_chunks()
 
-    with patch("app.services.report_service._get_client") as mock_client_fn:
-        mock_client = MagicMock()
-        mock_client_fn.return_value = mock_client
-        mock_msg = MagicMock()
-        mock_msg.content = [MagicMock(text=MOCK_API_RESPONSE)]
-        mock_client.messages.create.return_value = mock_msg
-
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE):
         report = generate_report(servitutter, chunks, "case-test")
 
     assert isinstance(report, Report)

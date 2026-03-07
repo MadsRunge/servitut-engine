@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 class PageData(BaseModel):
     page_number: int
     text: str
-    extraction_method: str = "pdfplumber"  # pdfplumber | ocr_candidate
-    confidence: float = 1.0
+    image_path: Optional[str] = None
+    extraction_method: str = "claude_vision"  # claude_vision | pdfplumber
+    confidence: float = 0.9
 
 
 class Document(BaseModel):
@@ -19,4 +20,4 @@ class Document(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     page_count: int = 0
     pages: List[PageData] = Field(default_factory=list)
-    parse_status: str = "pending"  # pending | parsed | error
+    parse_status: str = "pending"  # pending | ocr_done | error

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import cases, documents, extraction, reports
+from app.api.routes import cases, documents, extraction, ocr, reports
 from app.core.logging import setup_logging
 
 setup_logging()
@@ -21,6 +21,7 @@ app.add_middleware(
 
 app.include_router(cases.router, prefix="/cases", tags=["cases"])
 app.include_router(documents.router, prefix="/cases", tags=["documents"])
+app.include_router(ocr.router, prefix="/cases", tags=["ocr"])
 app.include_router(extraction.router, prefix="/cases", tags=["extraction"])
 app.include_router(reports.router, prefix="/cases", tags=["reports"])
 

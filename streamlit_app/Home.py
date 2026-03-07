@@ -9,7 +9,7 @@ from app.services.case_service import list_cases
 
 st.set_page_config(page_title="Servitut Engine", layout="wide")
 st.title("Servitut Engine v1")
-st.markdown("Pipeline: PDF → Parsed sider → Chunks → Servitutter → Redegørelse")
+st.markdown("Pipeline: PDF → Sidebilleder → OCR (Claude Vision) → Chunks → Servitutter → Redegørelse")
 
 cases = list_cases()
 
@@ -28,5 +28,5 @@ else:
 st.divider()
 st.markdown(
     "**Pipeline-trin:** "
-    "[1 Create Case](#) → [2 Upload](#) → [3 Parse](#) → [4 Chunks](#) → [5 Extract](#) → [6 Report](#) → [7 Review](#)"
+    "[1 Create Case](#) → [2 Upload](#) → [3 OCR](#) → [4 Inspect Pages](#) → [5 Chunks](#) → [6 Extract](#) → [7 Report](#) → [8 Review](#)"
 )

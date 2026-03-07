@@ -25,7 +25,7 @@ st.info(f"{len(all_chunks)} chunks i alt på tværs af dokumenter")
 
 if st.button("Kør ekstraktion (Claude API)", type="primary"):
     if not all_chunks:
-        st.error("Ingen chunks — parse dokumenter først.")
+        st.error("Ingen chunks — kør OCR først.")
     else:
         with st.spinner("Kalder Claude API..."):
             try:

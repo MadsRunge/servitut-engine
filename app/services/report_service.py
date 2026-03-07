@@ -1,26 +1,16 @@
 import json
 from typing import List, Optional
 
-import anthropic
-
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Servitut
+from app.services.llm_service import generate_text
 from app.services.rag_service import find_relevant_chunks
 from app.utils.ids import generate_report_id
 
 logger = get_logger(__name__)
-
-_client: anthropic.Anthropic | None = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    return _client
 
 
 def _load_prompt() -> str:
@@ -46,7 +36,6 @@ def generate_report(
     """Generate a structured report from extracted servitutter."""
     report_id = generate_report_id()
     prompt_template = _load_prompt()
-    client = _get_client()
 
     servitutter_json = json.dumps(
         [s.model_dump() for s in servitutter],
@@ -64,12 +53,7 @@ def generate_report(
     notes: Optional[str] = None
 
     try:
-        message = client.messages.create(
-            model=settings.MODEL,
-            max_tokens=8192,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        response_text = message.content[0].text.strip()
+        response_text = generate_text(prompt, max_tokens=8192).strip()
 
         # Parse JSON response
         start = response_text.find("{")

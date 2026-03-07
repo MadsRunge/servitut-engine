@@ -1,159 +1,118 @@
-# CLAUDE.md — Servitut Engine
+# CLAUDE.md
 
-Dette dokument er den styrende kontekst for Claude Code-sessioner på dette projekt.
-Læs det før du gør noget som helst.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
----
+## Commands
 
-## Hvad er dette projekt?
-
-En Python-baseret motor til automatisk udtræk og AI-assisteret redegørelse af tinglyste servitutter fra PDF-dokumenter. Målgruppen er landinspektører, advokater og bygherrer.
-
-**Kerneopgave:** Modtag PDF-akter → udtræk servitutter som struktureret JSON → formuler en professionel redegørelsestabel.
-
----
-
-## Kritisk designprincip
-
-**Ekstraktion først. Formulering bagefter.**
-
-Claude bruges to gange i pipeline:
-1. Til at udtrække facts som struktureret JSON (ingen formulering)
-2. Til at formulere den endelige redegørelse baseret på det strukturerede JSON
-
-Bland aldrig disse to trin. Ekstraktion skal altid kunne inspiceres uafhængigt af formuleringen.
-
----
-
-## Pipeline (v1)
-
-```
-PDF → PageData (pdfplumber) → Chunks (paragraph-split) → Servitut JSON (Claude) → Rapport (Claude)
+```bash
+uv sync --extra dev          # install app + test dependencies
+uv run uvicorn app.api.main:app --reload   # API on http://localhost:8000
+uv run streamlit run streamlit_app/Home.py # UI on http://localhost:8501
+uv run pytest -v             # full test suite (26 tests)
+uv run pytest tests/test_report_generation.py -q  # focused service-level check
+uv run pytest tests/test_chunking.py::test_name -v  # single test
 ```
 
-Trin:
-1. **PDF parsing** — `app/services/pdf_service.py` — pdfplumber, side-for-side, OCR-kandidat-detektion
-2. **Chunking** — `app/services/chunking_service.py` — paragraph-split med overlap, stabile hash-IDs
-3. **Pre-screening** — `app/services/extraction_service.py` — keyword-filter før LLM-kald
-4. **Ekstraktion** — `app/services/extraction_service.py` — Claude → `List[Servitut]` som JSON
-5. **RAG** — `app/services/rag_service.py` — keyword-scoring, top-k evidens-chunks
-6. **Rapport** — `app/services/report_service.py` — Claude → Markdown-tabel + JSON-rapport
+Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY` before running the API or UI.
 
----
+## Architecture
 
-## Hvad er allerede bygget (v1 baseline)
+The pipeline processes Danish property deed PDFs (servitutter) through these stages:
 
-Alle filer under `app/`, `streamlit_app/`, `prompts/` og `tests/` er implementeret og fungerende.
-26 tests passer (`uv run pytest tests/ -v`).
+```
+PDF → OCR (Claude Vision) → PageData → Chunks → Servitut JSON → Report (Markdown)
+```
 
-Fungerende:
-- Case CRUD med JSON-persistens (`storage/cases/{case_id}/`)
-- PDF parsing med pdfplumber + OCR-kandidat-detektion
-- Paragraph-baseret chunking med stabile chunk-IDs
-- Pre-screening med danske servitut-keywords
-- Ekstraktion via Claude API → `List[Servitut]`
-- RAG keyword-scoring → evidens-chunks
-- Rapport-generering via Claude API → Markdown-tabel
-- FastAPI med fuld CRUD + pipeline-endpoints
-- Streamlit UI med 7 pipeline-trin (sider 1–7)
+**Stage 1 — OCR** (`app/services/ocr_service.py`): pymupdf renders each PDF page to PNG; Claude Vision reads the image and returns raw text as `PageData`. Images stored in `storage/cases/{case_id}/page_images/{doc_id}/`.
 
----
+**Stage 2 — Chunking** (`app/services/chunking_service.py`): Paragraph-based splitting with configurable `MAX_CHUNK_SIZE` / `CHUNK_OVERLAP`. Chunk IDs = sha256(doc_id:page:chunk_index)[:12].
 
-## Hvad der IKKE skal bygges i v1
+**Stage 3 — Extraction** (`app/services/extraction_service.py`): Keyword pre-screening (`app/utils/text.py:has_servitut_keywords`) filters chunks before sending to Claude. Processes per document. Returns `List[Servitut]`.
 
-Hold scope stramt. Disse ting hører til v2 eller senere:
+**Stage 4 — Reporting** (`app/services/report_service.py`): RAG service (`app/services/rag_service.py`) retrieves evidence chunks; Claude generates a Markdown table report.
 
-- Ingen BBR/Datafordeler-integration
-- Ingen autentificering eller brugeradministration
-- Ingen database (PostgreSQL, SQLite etc.) — brug JSON-filer
-- Ingen vektor-database eller embedding-baseret RAG
-- Ingen OCR-implementering (marker kandidater, implementer ikke)
-- Ingen asynkron task-queue (Celery, Redis etc.)
-- Ingen deployment-infrastruktur (Docker, CI/CD etc.)
+## Storage Layout
 
----
-
-## Testdata
-
-Realistiske eksempel-PDFer ligger i `docs/sample_cases/magnus/`:
-
-| Fil | Type | Formål |
-|-----|------|--------|
-| `Servitutredegørelse fra Magnus Thernøe.pdf` | Ground truth | Facit — korrekt output-format |
-| `Servitutredegørelse 22258.pdf` | Ground truth | Andet eksempel på korrekt format |
-| `Indskannet akt fra Magnus Thernøe.pdf` | Indskannet akt | Worst-case input (håndskrevet/skannet) |
-| `Indskannet akt fra Magnus Thernøe (1-3).pdf` | Indskannede akter | Flere worst-case eksempler |
-| `Ejendomssammendrag fra Magnus Thernøe.pdf` | Struktureret dokument | Typisk input |
-| `BBR Meddelelse fra Magnus Thernøe.pdf` | BBR-udtræk | Supplement til servitutanalyse |
-| `Metodeforslag AI servitutredegørelse.pdf` | Metodedokument | Baggrundsviden om domænet |
-
-Brug ground truth-filerne til at evaluere systemets output kvalitativt.
-
----
-
-## Redegørelsestabelformat (ground truth)
-
-Kolonner i den korrekte output-tabel:
-
-| Nr. | Dato/løbenummer | Beskrivelse af indhold | Påtaleberettiget | Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet |
-
-Dette format er defineret i `prompts/generate_report.txt` og i `app/models/report.py` (`ReportEntry`).
-
----
-
-## Storage-struktur
+All runtime data lives under `storage/` (treat as generated, not source):
 
 ```
 storage/cases/{case_id}/
   case.json
-  documents/{doc_id}/
-    original.pdf
-    metadata.json        # dokument-metadata uden pages
-    pages.json           # side-for-side tekst
-    chunks.json          # alle chunks
-  servitutter/
-    {servitut_id}.json
-  reports/
-    {report_id}.json
+  documents/{doc_id}/metadata.json   # Document model without pages
+  ocr/{doc_id}_pages.json            # PageData list (pages stored separately)
+  page_images/{doc_id}/page_N.png
+  chunks/{doc_id}_chunks.json
+  servitutter/{servitut_id}.json
+  reports/{report_id}.json
 ```
 
-Al data er plain JSON. Læs frit med `cat` eller en editor for at debugge.
+All persistence goes through `app/services/storage_service.py` — never write storage paths inline in routes or other services.
+
+## Key Conventions
+
+- Route handlers in `app/api/routes/` stay thin; business logic belongs in `app/services/`.
+- Use `app.core.config.settings` for all config; `app.core.logging.get_logger(__name__)` for logging.
+- Pydantic v2 throughout: use `model_dump()` not `.dict()`.
+- Prompts are plain text files in `prompts/` with `{placeholder}` variables replaced via `.replace()`. Three prompts exist: `ocr_page.txt`, `extract_servitut.txt` (uses `{chunks_text}`), `generate_report.txt` (uses `{servitutter_json}` and `{evidence_text}`).
+- Tests use `tmp_path` and `monkeypatch` to override `settings.STORAGE_DIR`; cover happy paths and LLM error/fallback paths.
+- Conventional Commit prefixes: `feat:`, `fix:`, `docs:`, `chore:`.
+
+
+
+
+# Workflow Orchestration
+
+## #1. Plan Mode Default
+- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+- If something goes sideways, STOP and re-plan immediately — don’t keep pushing
+- Use plan mode for verification steps, not just building
+- Write detailed specs upfront to reduce ambiguity
+
+## #2. Subagent Strategy
+- Use subagents liberally to keep main context window clean
+- Offload research, exploration, and parallel analysis to subagents
+- For complex problems, throw more compute at it via subagents
+- One task per subagent for focused execution
+
+## #3. Self-Improvement Loop
+- After ANY correction from the user: update `tasks/lessons.md` with the pattern
+- Write rules for yourself that prevent the same mistake
+- Ruthlessly iterate on these lessons until mistake rate drops
+- Review lessons at session start for relevant project
+
+## #4. Verification Before Done
+- Never mark a task complete without proving it works
+- Diff behavior between main and your changes when relevant
+- Ask yourself: “Would a staff engineer approve this?”
+- Run tests, check logs, demonstrate correctness
+
+## #5. Demand Elegance (Balanced)
+- For non-trivial changes: pause and ask “is there a more elegant way?”
+- If a fix feels hacky: “Knowing everything I know now, implement the elegant solution”
+- Skip this for simple, obvious fixes — don’t over-engineer
+- Challenge your own work before presenting it
+
+## #6. Autonomous Bug Fixing
+- When given a bug report: just fix it. Don’t ask for hand-holding
+- Point at logs, errors, failing tests — then resolve them
+- Zero context switching required from the user
+- Go fix failing CI tests without being told how
 
 ---
 
-## Nøglefiler
+# Task Management
 
-```
-app/core/config.py              Pydantic Settings — alle env-variabler
-app/services/pdf_service.py     PDF parsing
-app/services/chunking_service.py Chunking
-app/services/extraction_service.py Pre-screening + Claude ekstraktion
-app/services/rag_service.py     Keyword-scoring RAG
-app/services/report_service.py  Rapport-generering
-app/services/storage_service.py Al fil-I/O
-prompts/extract_servitut.txt    Ekstraktions-prompt ({chunks_text})
-prompts/generate_report.txt     Rapport-prompt ({servitutter_json}, {evidence_text})
-```
+1. **Plan First**: Write plan to `tasks/todo.md` with checkable items  
+2. **Verify Plan**: Check plan in before starting implementation  
+3. **Track Progress**: Mark items complete as you go  
+4. **Explain Changes**: High-level summary at each step  
+5. **Document Results**: Add review section to `tasks/todo.md`  
+6. **Capture Lessons**: Update `tasks/lessons.md` after corrections  
 
 ---
 
-## Kørsel
+# Core Principles
 
-```bash
-uv sync --extra dev                                    # installer dependencies
-cp .env.example .env                                   # tilføj ANTHROPIC_API_KEY
-uv run uvicorn app.api.main:app --reload               # API på :8000
-uv run streamlit run streamlit_app/Home.py             # UI på :8501
-uv run pytest tests/ -v                                # kør tests
-```
-
----
-
-## Kodekonventioner
-
-- **Pydantic v2** — brug `model_dump()`, ikke `.dict()`
-- **Ingen globale side-effekter** — services må ikke importere hinanden cirkulært
-- **Logging** — brug `get_logger(__name__)` fra `app.core.logging`
-- **Fejlhåndtering** — API-lag kaster `HTTPException`, services logger og re-raiser
-- **Test-isolation** — brug `monkeypatch` på `settings.STORAGE_DIR` til at pege på `tmp_path`
-- **Ingen requirements.txt** — brug kun `pyproject.toml` + `uv`
+- **Simplicity First**: Make every change as simple as possible. Impact minimal code.
+- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
+- **Minimal Impact**: Changes should only touch what’s necessary. Avoid introducing bugs.

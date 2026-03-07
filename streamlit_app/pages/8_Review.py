@@ -59,18 +59,17 @@ if srv.evidence:
     for ev in srv.evidence:
         with st.expander(f"Side {ev.page} | Chunk `{ev.chunk_id}`"):
             st.text(ev.text_excerpt)
-            # Load full chunk for context
             full_chunks = storage_service.load_chunks(case_id, ev.document_id)
             full_chunk = next((c for c in full_chunks if c.chunk_id == ev.chunk_id), None)
             if full_chunk:
                 st.markdown("**Fuld chunk-tekst:**")
                 st.text(full_chunk.text)
-            # Show page context
-            doc = storage_service.load_document(case_id, ev.document_id)
-            if doc and doc.pages:
-                page = next((p for p in doc.pages if p.page_number == ev.page), None)
-                if page:
-                    st.markdown(f"**Kilde-side {page.page_number}** ({page.extraction_method}):")
-                    st.text(page.text[:1500])
+            pages = storage_service.load_ocr_pages(case_id, ev.document_id)
+            page = next((p for p in pages if p.page_number == ev.page), None)
+            if page:
+                st.markdown(f"**OCR-tekst side {page.page_number}:**")
+                if page.image_path and Path(page.image_path).exists():
+                    st.image(page.image_path, width=400)
+                st.text(page.text[:1500])
 else:
     st.info("Ingen evidens-chunks registreret for denne servitut.")

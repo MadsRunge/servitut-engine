@@ -43,7 +43,7 @@ PDF-dokumenter
 ```
 
 **Designprincip: Ekstraktion først. Formulering bagefter.**
-Claude bruges to gange: én gang til at udtrække facts som JSON, én gang til at formulere den endelige redegørelse.
+Den valgte LLM-provider bruges to gange: én gang til at udtrække facts som JSON, én gang til at formulere den endelige redegørelse.
 
 ---
 
@@ -52,7 +52,7 @@ Claude bruges to gange: én gang til at udtrække facts som JSON, én gang til a
 | Komponent | Teknologi | Begrundelse |
 |-----------|-----------|-------------|
 | PDF parsing | `pdfplumber` | Python-native, ingen externe tools, god tekstekstraktion fra digitale PDFer |
-| LLM | Anthropic Claude (`claude-sonnet-4-6`) | Bedst til dansk juridisk tekst, konfigurerbart model-valg |
+| LLM | Anthropic Claude eller DeepSeek | Provider styres via `.env`, så model og nøgle kan skiftes uden kodeændringer |
 | Storage | Lokale JSON-filer | Simpel, debugbar, ingen database-afhængighed i v1 |
 | API | FastAPI + Pydantic v2 | Type-sikker, hurtig, god swagger-dokumentation |
 | UI | Streamlit | Hurtig prototype-UI med minimal boilerplate |
@@ -164,15 +164,27 @@ Dette opretter `.venv` automatisk og installerer alle dependencies inkl. test-af
 cp .env.example .env
 ```
 
-Åbn `.env` og udfyld din API-nøgle:
+Åbn `.env` og vælg provider samt den relevante API-nøgle:
 
 ```env
+LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 MODEL=claude-sonnet-4-6
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+LLM_TIMEOUT_SECONDS=120
 STORAGE_DIR=storage
 PROMPTS_DIR=prompts
 MAX_CHUNK_SIZE=2000
 CHUNK_OVERLAP=200
+```
+
+For DeepSeek, sæt fx:
+
+```env
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-...
+MODEL=deepseek-chat
 ```
 
 ### 3. Start API-serveren
@@ -207,7 +219,7 @@ Følg pipeline-trinene i rækkefølge via sidemenuen:
 2. **Upload Documents** — Upload én eller flere PDF-filer til sagen
 3. **Parse Documents** — Kør pdfplumber-parsing; sider med lav tekstmængde markeres som OCR-kandidater
 4. **Inspect Chunks** — Gennemse de opdelte chunks; filtrer på dokument og side
-5. **Extract Servitutter** — Kald Claude API; se struktureret JSON pr. servitut med confidence-score
+5. **Extract Servitutter** — Kald den valgte LLM-provider; se struktureret JSON pr. servitut med confidence-score
 6. **Generate Report** — Generer den endelige redegørelse som Markdown-tabel
 7. **Review** — Fuld sporbarhed: vælg en servitut og se de chunks og kilde-sider der lå til grund
 
@@ -256,8 +268,12 @@ Alle indstillinger styres via `.env` og eksponeres som Pydantic `BaseSettings`:
 
 | Variabel | Standard | Beskrivelse |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | *(påkrævet)* | Anthropic API-nøgle |
-| `MODEL` | `claude-sonnet-4-6` | Claude model-ID |
+| `LLM_PROVIDER` | `anthropic` | Aktiv provider: `anthropic` eller `deepseek` |
+| `ANTHROPIC_API_KEY` | tom | Anthropic API-nøgle ved `LLM_PROVIDER=anthropic` |
+| `DEEPSEEK_API_KEY` | tom | DeepSeek API-nøgle ved `LLM_PROVIDER=deepseek` |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Base URL for DeepSeek OpenAI-kompatibelt endpoint |
+| `MODEL` | `claude-sonnet-4-6` | Model-ID for den valgte provider |
+| `LLM_TIMEOUT_SECONDS` | `120` | Timeout for LLM-kald |
 | `STORAGE_DIR` | `storage` | Rod-mappe for al data |
 | `PROMPTS_DIR` | `prompts` | Mappe med prompt-filer |
 | `MAX_CHUNK_SIZE` | `2000` | Maks tegn pr. chunk |
@@ -273,7 +289,7 @@ Chunk-IDs genereres deterministisk som `sha256(doc_id:page:chunk_index)[:12]`. D
 
 ### Pre-screening
 
-Før Claude kaldes, filtreres chunks på et sæt danske servitut-nøgleord (`servitut`, `deklaration`, `tinglyst`, `påtaleberettiget`, `byggelinje`, `vejret`, osv.). Dette reducerer API-forbrug og øger signal/støj-ratio i prompten.
+Før LLM kaldes, filtreres chunks på et sæt danske servitut-nøgleord (`servitut`, `deklaration`, `tinglyst`, `påtaleberettiget`, `byggelinje`, `vejret`, osv.). Dette reducerer API-forbrug og øger signal/støj-ratio i prompten.
 
 ### OCR-kandidat-detektion
 

@@ -1,26 +1,15 @@
 import json
-from pathlib import Path
 from typing import List
-
-import anthropic
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
+from app.services.llm_service import generate_text
 from app.utils.ids import generate_servitut_id
 from app.utils.text import has_servitut_keywords
 
 logger = get_logger(__name__)
-
-_client: anthropic.Anthropic | None = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    return _client
 
 
 def _load_prompt() -> str:
@@ -77,7 +66,7 @@ def extract_servitutter(
     chunks: List[Chunk],
     case_id: str,
 ) -> List[Servitut]:
-    """Run pre-screening + Claude extraction on chunks, return Servitut list."""
+    """Run pre-screening + LLM extraction on chunks, return Servitut list."""
     if not chunks:
         return []
 
@@ -92,7 +81,6 @@ def extract_servitutter(
         doc_chunks.setdefault(c.document_id, []).append(c)
 
     prompt_template = _load_prompt()
-    client = _get_client()
     all_servitutter: List[Servitut] = []
 
     for doc_id, doc_chunk_list in doc_chunks.items():
@@ -101,15 +89,10 @@ def extract_servitutter(
         prompt = prompt_template.replace("{chunks_text}", chunks_text)
 
         try:
-            message = client.messages.create(
-                model=settings.MODEL,
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            response_text = message.content[0].text
+            response_text = generate_text(prompt, max_tokens=4096)
             extracted = _parse_llm_response(response_text)
         except Exception as e:
-            logger.error(f"Claude API error for doc {doc_id}: {e}")
+            logger.error(f"LLM extraction error for doc {doc_id}: {e}")
             continue
 
         for i, item in enumerate(extracted):

@@ -3,8 +3,12 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
+    LLM_PROVIDER: str = "anthropic"
     ANTHROPIC_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     MODEL: str = "claude-sonnet-4-6"
+    LLM_TIMEOUT_SECONDS: int = 120
     STORAGE_DIR: str = "storage"
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000
