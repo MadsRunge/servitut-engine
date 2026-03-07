@@ -21,8 +21,9 @@ def _doc_dir(case_id: str, doc_id: str) -> Path:
     return _case_dir(case_id) / "documents" / doc_id
 
 
-def get_page_images_dir(case_id: str, doc_id: str) -> Path:
-    return _case_dir(case_id) / "page_images" / doc_id
+def get_ocr_pdf_path(case_id: str, doc_id: str) -> Path:
+    """Sti til OCR-behandlet PDF (canonical OCR-artifact)."""
+    return _doc_dir(case_id, doc_id) / "ocr.pdf"
 
 
 def get_ocr_path(case_id: str, doc_id: str) -> Path:

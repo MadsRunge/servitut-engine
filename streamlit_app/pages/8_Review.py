@@ -9,7 +9,7 @@ from app.services import case_service, storage_service
 
 st.set_page_config(page_title="Review & Sporbarhed", layout="wide")
 st.title("Review & Sporbarhed")
-st.markdown("Klik på en servitut for at se tilhørende chunks og kilde-sider.")
+st.markdown("Spor en servitut tilbage til kilde-side og OCR-tekst.")
 
 cases = case_service.list_cases()
 if not cases:
@@ -51,25 +51,39 @@ with col1:
 with col2:
     st.metric("Confidence", f"{srv.confidence:.2f}")
     st.caption(f"ID: {srv.servitut_id}")
-    st.caption(f"Kilde: {srv.source_document}")
+    st.caption(f"Kilde-dokument: {srv.source_document}")
 
 st.divider()
-st.subheader("Evidens-chunks")
+st.subheader("Evidens — sporing til kilde")
+
 if srv.evidence:
     for ev in srv.evidence:
         with st.expander(f"Side {ev.page} | Chunk `{ev.chunk_id}`"):
             st.text(ev.text_excerpt)
+
             full_chunks = storage_service.load_chunks(case_id, ev.document_id)
             full_chunk = next((c for c in full_chunks if c.chunk_id == ev.chunk_id), None)
             if full_chunk:
                 st.markdown("**Fuld chunk-tekst:**")
                 st.text(full_chunk.text)
+
             pages = storage_service.load_ocr_pages(case_id, ev.document_id)
             page = next((p for p in pages if p.page_number == ev.page), None)
             if page:
-                st.markdown(f"**OCR-tekst side {page.page_number}:**")
-                if page.image_path and Path(page.image_path).exists():
-                    st.image(page.image_path, width=400)
+                st.markdown(f"**OCR-tekst side {page.page_number}** (conf={page.confidence:.2f}):")
                 st.text(page.text[:1500])
+
+                # Render sidebillede on-demand fra original PDF
+                pdf_path = storage_service.get_document_pdf_path(case_id, ev.document_id)
+                if pdf_path.exists():
+                    try:
+                        import fitz
+                        fitz_doc = fitz.open(str(pdf_path))
+                        fitz_page = fitz_doc[ev.page - 1]
+                        pix = fitz_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+                        st.image(pix.tobytes("png"), caption=f"Side {ev.page}")
+                        fitz_doc.close()
+                    except Exception:
+                        pass
 else:
     st.info("Ingen evidens-chunks registreret for denne servitut.")

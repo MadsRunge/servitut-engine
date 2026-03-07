@@ -9,7 +9,7 @@ from app.services.case_service import list_cases
 
 st.set_page_config(page_title="Servitut Engine", layout="wide")
 st.title("Servitut Engine v1")
-st.markdown("Pipeline: PDF → Sidebilleder → OCR (Claude Vision) → Chunks → Servitutter → Redegørelse")
+st.markdown("Pipeline: PDF → ocrmypdf → OCR-tekst → Chunks → Servitutter → Redegørelse")
 
 cases = list_cases()
 

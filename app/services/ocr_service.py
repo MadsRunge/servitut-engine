@@ -1,125 +1,106 @@
-"""OCR-first document processing using pymupdf for rendering and Tesseract for OCR."""
+"""
+OCR-first dokumentbehandling.
+
+Pipeline: original.pdf → ocrmypdf → ocr.pdf (PDF med tekstlag) → pdfplumber → List[PageData]
+
+Resten af systemet må kun kende PageData — ikke OCR-engine.
+"""
+import shutil
 from pathlib import Path
 from typing import List
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.document import PageData
 from app.utils.text import clean_text
 
 logger = get_logger(__name__)
 
-# Tesseract config: danske tegn, PSM 3 = auto page segmentation
-_TESSERACT_CONFIG = "--oem 1 --psm 3"
-_TESSERACT_LANG = "dan+eng"
 
-# DPI scale for pymupdf rendering — higher = bedre OCR kvalitet
-_RENDER_SCALE = 3.0
-
-
-def render_pdf_to_images(pdf_path: Path, output_dir: Path) -> List[Path]:
-    """Render each PDF page to PNG. Returns list of image paths sorted by page number."""
-    try:
-        import fitz
-    except ImportError:
-        raise RuntimeError("pymupdf ikke installeret. Kør: uv sync")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    doc = fitz.open(str(pdf_path))
-    image_paths: List[Path] = []
-
-    mat = fitz.Matrix(_RENDER_SCALE, _RENDER_SCALE)
-    for i, page in enumerate(doc):
-        page_number = i + 1
-        pix = page.get_pixmap(matrix=mat)
-        img_path = output_dir / f"page_{page_number}.png"
-        pix.save(str(img_path))
-        image_paths.append(img_path)
-        logger.debug(f"Renderet side {page_number} → {img_path.name}")
-
-    doc.close()
-    logger.info(f"Renderet {len(image_paths)} sider fra {pdf_path.name}")
-    return image_paths
-
-
-def ocr_image(img_path: Path) -> tuple[str, float]:
+def _estimate_confidence(text: str) -> float:
     """
-    Run Tesseract OCR on a single page image.
-    Returns (text, mean_confidence) where confidence is 0.0–1.0.
+    Estimér OCR-kvalitet ud fra tekstindhold.
+    Blank side eller ren støj → lav confidence; læsbar tekst → høj confidence.
+    """
+    if not text:
+        return 0.0
+    alnum_chars = sum(c.isalnum() for c in text)
+    ratio = alnum_chars / len(text)
+    # ratio ~0.45 for normal tekst, <0.15 for støj
+    return round(min(1.0, max(0.0, (ratio - 0.10) / 0.40)), 3)
+
+
+def run_ocrmypdf(pdf_path: Path, ocr_pdf_path: Path) -> None:
+    """
+    Kør ocrmypdf på original PDF og gem OCR-resultatet som ocr.pdf.
+    Tilføjer tekstlag til scannede sider; springer sider over der allerede har tekst.
     """
     try:
-        import pytesseract
-        from PIL import Image
+        import ocrmypdf
     except ImportError:
-        raise RuntimeError("pytesseract/pillow ikke installeret. Kør: uv sync")
+        raise RuntimeError("ocrmypdf ikke installeret. Kør: brew install ocrmypdf")
 
-    image = Image.open(img_path)
+    ocr_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Kører ocrmypdf: {pdf_path.name} → {ocr_pdf_path.name}")
 
-    # Get text + per-word confidence data
-    data = pytesseract.image_to_data(
-        image,
-        lang=_TESSERACT_LANG,
-        config=_TESSERACT_CONFIG,
-        output_type=pytesseract.Output.DICT,
-    )
-
-    # Byg tekst og beregn gennemsnitlig confidence fra ord med conf > -1
-    words = []
-    confidences = []
-    for i, word in enumerate(data["text"]):
-        conf = int(data["conf"][i])
-        if conf == -1:
-            # Linjeskift/blok-separator
-            if word.strip() == "" and words:
-                words.append("\n")
-        elif word.strip():
-            words.append(word)
-            confidences.append(conf)
-
-    text = clean_text(" ".join(words))
-    mean_conf = (sum(confidences) / len(confidences) / 100.0) if confidences else 0.0
-
-    return text, mean_conf
+    try:
+        ocrmypdf.ocr(
+            input_file=str(pdf_path),
+            output_file=str(ocr_pdf_path),
+            language=settings.OCR_LANGUAGE,
+            deskew=settings.OCR_DESKEW,
+            skip_text=True,       # spring over sider der allerede har tekst
+            progress_bar=False,
+            jobs=1,
+        )
+    except ocrmypdf.exceptions.PriorOcrFoundError:
+        # Dokumentet har allerede et fuldt tekstlag — brug original som OCR-output
+        logger.info("Dokument har allerede OCR-tekstlag — kopierer original")
+        shutil.copy(str(pdf_path), str(ocr_pdf_path))
 
 
-def process_document(pdf_path: Path, doc_id: str, case_id: str, images_dir: Path) -> List[PageData]:
-    """
-    Full OCR pipeline for one document.
-
-    1. Render hver PDF-side til PNG (pymupdf, 3x scale)
-    2. Kør Tesseract OCR (dan+eng) på hvert billede
-    3. Returner List[PageData] med tekst + confidence pr. side
-    """
-    image_paths = render_pdf_to_images(pdf_path, images_dir)
+def extract_pages_from_ocr_pdf(ocr_pdf_path: Path) -> List[PageData]:
+    """Udtræk side-tekst fra OCR-behandlet PDF vha. pdfplumber."""
+    try:
+        import pdfplumber
+    except ImportError:
+        raise RuntimeError("pdfplumber ikke installeret. Kør: uv sync")
 
     pages: List[PageData] = []
-    for img_path in image_paths:
-        page_number = int(img_path.stem.split("_")[1])
-        logger.info(f"OCR side {page_number}/{len(image_paths)} — {doc_id}")
-        try:
-            text, confidence = ocr_image(img_path)
-            if confidence < 0.4:
-                logger.warning(f"  Side {page_number}: lav confidence={confidence:.2f} — mulig dårlig scan")
-            else:
-                logger.info(f"  → {len(text)} tegn, conf={confidence:.2f}")
+    with pdfplumber.open(str(ocr_pdf_path)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_number = i + 1
+            raw_text = page.extract_text() or ""
+            text = clean_text(raw_text)
+            confidence = _estimate_confidence(text)
             pages.append(
                 PageData(
                     page_number=page_number,
                     text=text,
-                    image_path=str(img_path),
-                    extraction_method="tesseract",
-                    confidence=round(confidence, 3),
+                    extraction_method="ocrmypdf",
+                    confidence=confidence,
                 )
             )
-        except Exception as e:
-            logger.error(f"OCR fejl side {page_number}: {e}")
-            pages.append(
-                PageData(
-                    page_number=page_number,
-                    text="",
-                    image_path=str(img_path),
-                    extraction_method="tesseract",
-                    confidence=0.0,
-                )
-            )
+            logger.debug(f"  Side {page_number}: {len(text)} tegn, conf={confidence:.2f}")
 
+    logger.info(f"Udtrukket {len(pages)} sider fra {ocr_pdf_path.name}")
+    return pages
+
+
+def process_document(pdf_path: Path, doc_id: str, case_id: str, ocr_pdf_path: Path) -> List[PageData]:
+    """
+    Komplet OCR-pipeline for ét dokument.
+
+    1. Kør ocrmypdf på original.pdf → ocr.pdf
+    2. Udtræk side-tekst fra ocr.pdf med pdfplumber
+    3. Returner List[PageData]
+    """
+    run_ocrmypdf(pdf_path, ocr_pdf_path)
+    pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
+
+    blank = sum(1 for p in pages if p.confidence == 0.0)
+    low = sum(1 for p in pages if 0.0 < p.confidence < 0.4)
+    logger.info(
+        f"OCR færdig: {len(pages)} sider | {blank} blanke | {low} lav-conf | doc={doc_id}"
+    )
     return pages

@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000
     CHUNK_OVERLAP: int = 200
+    OCR_LANGUAGE: str = "dan+eng"
+    OCR_DESKEW: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

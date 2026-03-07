@@ -11,7 +11,7 @@ from app.services.ocr_service import process_document
 
 st.set_page_config(page_title="Kør OCR", layout="wide")
 st.title("Kør OCR på dokumenter")
-st.caption("PDF → sidebilleder (pymupdf) → tekst (Claude Vision) → chunks")
+st.caption("Pipeline: original.pdf → ocrmypdf → ocr.pdf → pdfplumber → chunks")
 
 cases = case_service.list_cases()
 if not cases:
@@ -29,7 +29,7 @@ if not docs:
 
 for doc in docs:
     status_badge = {
-        "pending": "⏳ Afventer",
+        "pending": "⏳ Afventer OCR",
         "ocr_done": "✅ OCR færdig",
         "error": "❌ Fejl",
     }.get(doc.parse_status, doc.parse_status)
@@ -40,11 +40,11 @@ for doc in docs:
 
         if col2.button("Kør OCR", key=f"ocr_{doc.document_id}", type="primary"):
             pdf_path = Path(doc.file_path)
-            images_dir = storage_service.get_page_images_dir(case_id, doc.document_id)
+            ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc.document_id)
 
-            with st.spinner(f"OCR kører på {doc.filename}..."):
+            with st.spinner(f"OCR kører på {doc.filename} (ocrmypdf)..."):
                 try:
-                    pages = process_document(pdf_path, doc.document_id, case_id, images_dir)
+                    pages = process_document(pdf_path, doc.document_id, case_id, ocr_pdf_path)
                     storage_service.save_ocr_pages(case_id, doc.document_id, pages)
 
                     doc.pages = pages
@@ -64,10 +64,12 @@ for doc in docs:
 
         if doc.parse_status == "ocr_done":
             pages = storage_service.load_ocr_pages(case_id, doc.document_id)
-            for page in pages:
-                conf_color = "green" if page.confidence >= 0.8 else "orange"
-                st.markdown(
-                    f"**Side {page.page_number}** — "
-                    f":{conf_color}[conf={page.confidence:.1f}] — "
-                    f"{len(page.text)} tegn"
-                )
+            blank = sum(1 for p in pages if p.confidence == 0.0)
+            low = sum(1 for p in pages if 0.0 < p.confidence < 0.4)
+            ok = len(pages) - blank - low
+            st.markdown(
+                f"**{len(pages)} sider** — "
+                f":green[{ok} ok] · "
+                f":orange[{low} lav conf] · "
+                f":gray[{blank} blanke]"
+            )

@@ -6,8 +6,7 @@ from pydantic import BaseModel, Field
 class PageData(BaseModel):
     page_number: int
     text: str
-    image_path: Optional[str] = None
-    extraction_method: str = "claude_vision"  # claude_vision | pdfplumber
+    extraction_method: str = "ocrmypdf"
     confidence: float = 0.9
 
 
@@ -16,7 +15,7 @@ class Document(BaseModel):
     case_id: str
     filename: str
     file_path: str
-    document_type: str = "unknown"  # servitut | bbr | ejendomssammendrag | unknown
+    document_type: str = "unknown"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     page_count: int = 0
     pages: List[PageData] = Field(default_factory=list)

@@ -3,8 +3,8 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException
 
-from app.models.document import Document, PageData
 from app.models.chunk import Chunk
+from app.models.document import Document, PageData
 from app.services import case_service, storage_service
 from app.services.chunking_service import chunk_pages
 from app.services.ocr_service import process_document
@@ -14,19 +14,22 @@ router = APIRouter()
 
 @router.post("/{case_id}/documents/{doc_id}/ocr", response_model=Document)
 def run_ocr(case_id: str, doc_id: str):
-    """Run OCR on a document: render pages to images, extract text via Claude Vision, chunk."""
+    """
+    Kør OCR-pipeline på et dokument:
+    original.pdf → ocrmypdf → ocr.pdf → pdfplumber tekst → chunks
+    """
     doc = storage_service.load_document(case_id, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
     pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
     if not pdf_path.exists():
-        raise HTTPException(status_code=400, detail="PDF file not found on disk")
+        raise HTTPException(status_code=400, detail="PDF-fil ikke fundet på disk")
 
-    images_dir = storage_service.get_page_images_dir(case_id, doc_id)
+    ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc_id)
 
     try:
-        pages = process_document(pdf_path, doc_id, case_id, images_dir)
+        pages = process_document(pdf_path, doc_id, case_id, ocr_pdf_path)
         storage_service.save_ocr_pages(case_id, doc_id, pages)
 
         doc.pages = pages
@@ -46,7 +49,7 @@ def run_ocr(case_id: str, doc_id: str):
 
 @router.get("/{case_id}/documents/{doc_id}/pages", response_model=List[PageData])
 def get_pages(case_id: str, doc_id: str):
-    """Return OCR pages for a document."""
+    """Returner OCR-sider for et dokument."""
     doc = storage_service.load_document(case_id, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
