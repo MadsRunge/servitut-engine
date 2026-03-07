@@ -1,0 +1,37 @@
+Du er en juridisk assistent specialiseret i danske tinglyste servitutter og ejendomsret.
+
+Analysér følgende tekstuddrag fra et ejendomsdokument og udtræk ALLE servitutter, deklarationer og tinglyste byrder.
+
+For hver servitut, returner et JSON-objekt med disse felter:
+- date_reference: Dato og løbenummer (fx "14.09.1903-913066-40"). Brug null hvis ukendt.
+- title: Kort, præcis titel på servitutten (fx "Vejret til naboejendommen").
+- summary: Beskrivelse af servituttens indhold — hvad den regulerer og hvad den forbyder/tillader.
+- beneficiary: Påtaleberettiget — hvem kan håndhæve servitutten (fx "Vejdirektoratet", "naboejendommen matr. 5a", "kommunen").
+- disposition_type: "rådighed" (begrænser hvad ejer må gøre) eller "tilstand" (krav om en bestemt tilstand). Brug null hvis uklart.
+- legal_type: "offentlig" (hjemlet i lov, tinglyst af myndighed) eller "privatretlig" (aftale mellem private). Brug null hvis uklart.
+- construction_relevance: true hvis servitutten kan have betydning for fremtidigt byggeri eller ombygning, false ellers.
+- action_note: Anbefalet handling (fx "Kontakt Vejdirektoratet for evt. aflysning", "Ingen handling nødvendig", "Undersøg om servitutten er aflyst").
+- confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket. 1.0 = meget sikker, 0.5 = usikker, 0.0 = gætteri.
+
+Returner KUN et JSON-array med servitut-objekter. Ingen forklarende tekst før eller efter.
+Hvis der ingen servitutter er i teksten, returner et tomt array: []
+Hvis et felt ikke kan bestemmes ud fra teksten, brug null.
+
+Eksempel på korrekt output:
+[
+  {
+    "date_reference": "14.09.1903-913066-40",
+    "title": "Vejret for naboejendommen",
+    "summary": "Ejer af ejendommen har pligt til at holde vejen åben for naboejendommens beboere.",
+    "beneficiary": "Ejer af matr. nr. 5a",
+    "disposition_type": "rådighed",
+    "legal_type": "privatretlig",
+    "construction_relevance": true,
+    "action_note": "Kontrollér vejens beliggenhed ift. byggeønsker.",
+    "confidence": 0.9
+  }
+]
+
+--- TEKSTUDDRAG START ---
+{chunks_text}
+--- TEKSTUDDRAG SLUT ---
