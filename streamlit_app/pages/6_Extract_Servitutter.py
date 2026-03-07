@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.core.config import settings
 from app.services import case_service, storage_service
 from app.services.extraction_service import extract_servitutter
 from streamlit_app.ui import (
@@ -29,19 +30,106 @@ render_case_stats(case.case_id)
 all_chunks = storage_service.load_all_chunks(case.case_id)
 render_section("Klar til udtræk", f"{len(all_chunks)} chunk(s) er tilgængelige på tværs af den aktive sags dokumenter.")
 
+
+def _worker_sort_key(worker_name: str) -> tuple[int, str]:
+    suffix = worker_name.rsplit("_", 1)[-1]
+    return (int(suffix), worker_name) if suffix.isdigit() else (999, worker_name)
+
+
+def _render_worker_cards(
+    container,
+    worker_states: dict[str, dict],
+    worker_slots: int,
+) -> None:
+    with container:
+        st.markdown("#### Worker-status")
+        cols = st.columns(worker_slots)
+        ordered_workers = sorted(worker_states, key=_worker_sort_key)
+        for idx in range(worker_slots):
+            with cols[idx]:
+                if idx < len(ordered_workers):
+                    state = worker_states[ordered_workers[idx]]
+                    st.markdown(f"**{ordered_workers[idx]}**")
+                    st.caption(f"Dokument: {state['doc_id']} · Type: {state['source_type']}")
+                    st.progress(int(state["progress"] * 100))
+                    st.markdown(f"`{state['stage']}`")
+                    st.caption(state["message"])
+                else:
+                    st.markdown(f"**Worker {idx + 1}**")
+                    st.progress(0)
+                    st.caption("Afventer opgave")
+
+
+def _render_document_status(container, doc_states: dict[str, dict]) -> None:
+    with container:
+        st.markdown("#### Dokumentstatus")
+        if not doc_states:
+            st.caption("Ingen dokumenter i kø endnu.")
+            return
+
+        for doc_id, state in doc_states.items():
+            progress = int(state["progress"] * 100)
+            st.markdown(f"**{doc_id}** · {state['source_type']}")
+            st.progress(progress)
+            worker = state.get("worker")
+            if worker:
+                st.caption(f"{state['message']} · {worker}")
+            else:
+                st.caption(state["message"])
+
+
+def _render_activity_log(container, events: list[str]) -> None:
+    with container:
+        st.markdown("#### Aktivitet")
+        if events:
+            st.code("\n".join(events[-12:]), language="text")
+        else:
+            st.caption("Ingen aktivitet endnu.")
+
+
 if st.button("Kør ekstraktion", type="primary"):
     if not all_chunks:
         st.error("Ingen chunks — kør OCR først.")
     else:
-        with st.spinner("Kalder LLM-provider..."):
-            try:
-                servitutter = extract_servitutter(all_chunks, case.case_id)
-                for srv in servitutter:
-                    storage_service.save_servitut(srv)
-                st.success(f"Udtrukket {len(servitutter)} servitutter")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Fejl: {e}")
+        doc_count = len(dict.fromkeys(chunk.document_id for chunk in all_chunks))
+        worker_slots = max(1, min(settings.EXTRACTION_MAX_CONCURRENCY, doc_count))
+        worker_states: dict[str, dict] = {}
+        doc_states: dict[str, dict] = {}
+        activity_events: list[str] = []
+        summary_placeholder = st.empty()
+        worker_container = st.empty()
+        document_container = st.empty()
+        activity_container = st.empty()
+
+        def handle_progress(event: dict) -> None:
+            doc_states[event["doc_id"]] = event
+            worker_name = event.get("worker")
+            if worker_name:
+                worker_states[worker_name] = event
+            activity_events.append(
+                f"{(worker_name or 'queue')} · {event['doc_id']} · {event['message']}"
+            )
+            completed = sum(1 for item in doc_states.values() if item["stage"] in {"completed", "failed"})
+            summary_placeholder.info(
+                f"Extraction kører: {completed}/{doc_count} dokumenter afsluttet · "
+                f"{worker_slots} worker(s)"
+            )
+            _render_worker_cards(worker_container, worker_states, worker_slots)
+            _render_document_status(document_container, doc_states)
+            _render_activity_log(activity_container, activity_events)
+
+        try:
+            servitutter = extract_servitutter(
+                all_chunks,
+                case.case_id,
+                progress_callback=handle_progress,
+            )
+            for srv in servitutter:
+                storage_service.save_servitut(srv)
+            summary_placeholder.success(f"Udtrukket {len(servitutter)} servitutter")
+            st.rerun()
+        except Exception as e:
+            summary_placeholder.error(f"Fejl under ekstraktion: {e}")
 
 render_section("Udtrukne servitutter", "Gennemgå felter, confidence og evidens før rapportgenerering.")
 servitutter = storage_service.list_servitutter(case.case_id)

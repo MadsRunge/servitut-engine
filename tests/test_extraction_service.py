@@ -3,6 +3,7 @@ from unittest.mock import patch
 from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.servitut import Servitut
+from app.services.extraction import llm_extractor
 from app.services import extraction_service
 
 
@@ -51,16 +52,19 @@ def test_extract_from_doc_chunks_uses_parallel_executor(monkeypatch):
         "doc-a": [make_chunk("doc-a")],
         "doc-b": [make_chunk("doc-b")],
     }
-    executor = SpyExecutor(max_workers=0)
 
     monkeypatch.setattr(
-        extraction_service,
+        llm_extractor,
         "ThreadPoolExecutor",
         lambda max_workers, thread_name_prefix=None: SpyExecutor(max_workers, thread_name_prefix),
     )
-    monkeypatch.setattr(extraction_service, "as_completed", lambda futures: list(reversed(list(futures))))
+    monkeypatch.setattr(
+        llm_extractor,
+        "wait",
+        lambda pending, timeout, return_when: (set(reversed(list(pending))), set()),
+    )
     with patch(
-        "app.services.extraction_service._extract_document_servitutter",
+        "app.services.extraction.llm_extractor._extract_document_servitutter",
         side_effect=[
             [Servitut(servitut_id="srv-a", case_id="case-test", source_document="doc-a")],
             [Servitut(servitut_id="srv-b", case_id="case-test", source_document="doc-b")],
@@ -81,10 +85,14 @@ def test_extract_from_doc_chunks_respects_concurrency_limit(monkeypatch):
         captured["thread_name_prefix"] = thread_name_prefix
         return SpyExecutor(max_workers, thread_name_prefix)
 
-    monkeypatch.setattr(extraction_service, "ThreadPoolExecutor", make_executor)
-    monkeypatch.setattr(extraction_service, "as_completed", lambda futures: list(futures))
+    monkeypatch.setattr(llm_extractor, "ThreadPoolExecutor", make_executor)
+    monkeypatch.setattr(
+        llm_extractor,
+        "wait",
+        lambda pending, timeout, return_when: (set(pending), set()),
+    )
     with patch(
-        "app.services.extraction_service._extract_document_servitutter",
+        "app.services.extraction.llm_extractor._extract_document_servitutter",
         return_value=[],
     ):
         extraction_service._extract_from_doc_chunks(
@@ -132,3 +140,30 @@ def test_extract_servitutter_preserves_input_document_order(monkeypatch):
         )
 
     assert [srv.source_document for srv in result] == ["doc-z", "doc-a"]
+
+
+def test_extract_document_servitutter_emits_progress_events():
+    events = []
+    chunk = make_chunk("doc-a")
+
+    with patch(
+        "app.services.extraction.llm_extractor.generate_text",
+        return_value='[{"title":"Test","confidence":0.8}]',
+    ):
+        result = extraction_service._extract_document_servitutter(
+            "doc-a",
+            [chunk],
+            "case-test",
+            "Prompt {chunks_text}",
+            "akt",
+            progress_callback=events.append,
+        )
+
+    assert len(result) == 1
+    assert [event["stage"] for event in events] == [
+        "running",
+        "requesting",
+        "parsing",
+        "completed",
+    ]
+    assert events[-1]["servitut_count"] == 1

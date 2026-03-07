@@ -5,6 +5,7 @@ from typing import Iterable
 
 import streamlit as st
 
+from app.models.report import ReportEntry
 from app.services import case_service, storage_service
 
 
@@ -224,6 +225,90 @@ def _inject_styles() -> None:
           padding: 1.1rem 1rem;
           background: rgba(255, 250, 242, 0.58);
         }
+
+        .report-card {
+          border: 1px solid var(--line);
+          border-radius: 24px;
+          background: linear-gradient(180deg, rgba(255, 252, 247, 0.95), rgba(250, 244, 235, 0.92));
+          padding: 1.15rem 1.2rem;
+          box-shadow: 0 18px 34px rgba(45, 35, 26, 0.06);
+          margin-bottom: 1rem;
+        }
+
+        .report-card-head {
+          display: flex;
+          justify-content: space-between;
+          gap: 1rem;
+          align-items: flex-start;
+          margin-bottom: 0.8rem;
+        }
+
+        .report-card-nr {
+          width: 2rem;
+          height: 2rem;
+          border-radius: 999px;
+          background: var(--accent-soft);
+          color: var(--accent);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          font-size: 0.95rem;
+        }
+
+        .report-card-title {
+          font-family: "Iowan Old Style", Georgia, serif;
+          font-size: 1.25rem;
+          line-height: 1.15;
+          margin: 0;
+        }
+
+        .report-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.75rem 1.2rem;
+          margin-top: 0.9rem;
+        }
+
+        .report-field-label {
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          font-size: 0.68rem;
+          color: var(--muted);
+          margin-bottom: 0.18rem;
+          font-weight: 700;
+        }
+
+        .report-field-value {
+          color: var(--ink);
+          font-size: 0.96rem;
+          line-height: 1.55;
+        }
+
+        .report-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          padding: 0.32rem 0.62rem;
+          border-radius: 999px;
+          font-size: 0.78rem;
+          font-weight: 700;
+          border: 1px solid var(--line);
+          background: rgba(255, 250, 242, 0.95);
+          color: var(--muted);
+        }
+
+        .report-badge.relevant {
+          background: rgba(15, 118, 110, 0.12);
+          color: var(--accent);
+          border-color: rgba(15, 118, 110, 0.18);
+        }
+
+        @media (max-width: 900px) {
+          .report-grid {
+            grid-template-columns: 1fr;
+          }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -384,3 +469,43 @@ def confidence_band(value: float) -> tuple[str, str]:
     if value > 0.0:
         return "Lav", "orange"
     return "Tom", "gray"
+
+
+def render_report_entry_card(entry: ReportEntry) -> None:
+    relevant_class = "relevant" if entry.relevant_for_project else ""
+    relevant_label = "Vedrører projekt" if entry.relevant_for_project else "Ikke markeret som projektkritisk"
+    st.markdown(
+        f"""
+        <div class="report-card">
+          <div class="report-card-head">
+            <div style="display:flex; gap:0.85rem; align-items:flex-start;">
+              <div class="report-card-nr">{entry.nr}</div>
+              <div>
+                <div class="report-card-title">{entry.description or "Ingen beskrivelse"}</div>
+                <div class="mini-note">{entry.date_reference or "Dato/løbenummer mangler"}</div>
+              </div>
+            </div>
+            <div class="report-badge {relevant_class}">{relevant_label}</div>
+          </div>
+          <div class="report-grid">
+            <div>
+              <div class="report-field-label">Påtaleberettiget</div>
+              <div class="report-field-value">{entry.beneficiary or "Ikke angivet"}</div>
+            </div>
+            <div>
+              <div class="report-field-label">Rådighed / Tilstand</div>
+              <div class="report-field-value">{entry.disposition or "Ikke angivet"}</div>
+            </div>
+            <div>
+              <div class="report-field-label">Retlig type</div>
+              <div class="report-field-value">{entry.legal_type or "Ikke angivet"}</div>
+            </div>
+            <div>
+              <div class="report-field-label">Håndtering / Handling</div>
+              <div class="report-field-value">{entry.action or "Ingen handling angivet"}</div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
