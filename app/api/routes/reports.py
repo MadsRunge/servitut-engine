@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException
 
 from app.models.report import Report
-from app.services import case_service, storage_service
+from app.services import case_service, matrikel_service, storage_service
 from app.services.report_service import generate_report
 
 router = APIRouter()
@@ -14,6 +14,12 @@ def create_report(case_id: str):
     case = case_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    case = case_service.sync_case_matrikler(case_id) or case
+    if matrikel_service.extraction_is_stale(case):
+        raise HTTPException(
+            status_code=400,
+            detail="Target matrikel changed since last extraction — rerun extraction first",
+        )
 
     servitutter = storage_service.list_servitutter(case_id)
     if not servitutter:
@@ -22,7 +28,13 @@ def create_report(case_id: str):
     all_chunks = storage_service.load_all_chunks(case_id)
 
     try:
-        report = generate_report(servitutter, all_chunks, case_id)
+        report = generate_report(
+            servitutter,
+            all_chunks,
+            case_id,
+            target_matrikel=case.target_matrikel,
+            available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

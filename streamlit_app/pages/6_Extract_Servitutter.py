@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from app.core.config import settings
-from app.services import case_service, storage_service
+from app.services import case_service, matrikel_service, storage_service
 from app.services.extraction_service import extract_servitutter
 from streamlit_app.ui import (
     render_case_banner,
@@ -14,6 +14,7 @@ from streamlit_app.ui import (
     render_empty_state,
     render_section,
     select_case,
+    select_target_matrikel,
     setup_page,
 )
 
@@ -24,11 +25,20 @@ setup_page(
 )
 
 case = select_case()
+case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
 all_chunks = storage_service.load_all_chunks(case.case_id)
 render_section("Klar til udtræk", f"{len(all_chunks)} chunk(s) er tilgængelige på tværs af den aktive sags dokumenter.")
+if case.target_matrikel:
+    st.caption(f"Aktiv ekstraktionskontekst: matrikel `{case.target_matrikel}`")
+if matrikel_service.extraction_is_stale(case) and case.last_extracted_target_matrikel:
+    st.warning(
+        "Målmatriklen er ændret siden sidste extraction. "
+        f"Kør extraction igen for at opdatere scope-vurderingerne fra "
+        f"`{case.last_extracted_target_matrikel}` til `{case.target_matrikel}`."
+    )
 
 
 def _worker_sort_key(worker_name: str) -> tuple[int, str]:
@@ -131,8 +141,11 @@ if st.button("Kør ekstraktion", type="primary"):
         except Exception as e:
             summary_placeholder.error(f"Fejl under ekstraktion: {e}")
 
-render_section("Udtrukne servitutter", "Gennemgå felter, confidence og evidens før rapportgenerering.")
-servitutter = storage_service.list_servitutter(case.case_id)
+render_section("Udtrukne servitutter", "Gennemgå felter, confidence, scope og evidens før rapportgenerering.")
+servitutter = matrikel_service.filter_servitutter_for_target(
+    storage_service.list_servitutter(case.case_id),
+    case.target_matrikel,
+)
 if not servitutter:
     render_empty_state("Ingen servitutter endnu", "Kør ekstraktion, når chunks er klar.")
 else:
@@ -145,6 +158,11 @@ else:
         ):
             col1, col2 = st.columns(2)
             col1.markdown(f"**Dato/ref:** {srv.date_reference or '—'}")
+            col1.markdown(
+                "**Gælder målmatrikel:** "
+                f"{'Ja' if srv.applies_to_target_matrikel else 'Nej' if srv.applies_to_target_matrikel is False else 'Uafklaret'}"
+            )
+            col1.markdown(f"**Matrikler:** {', '.join(srv.applies_to_matrikler) if srv.applies_to_matrikler else '—'}")
             col1.markdown(f"**Påtaleberettiget:** {srv.beneficiary or '—'}")
             col1.markdown(f"**Rådighed/tilstand:** {srv.disposition_type or '—'}")
             col2.markdown(f"**Retlig type:** {srv.legal_type or '—'}")
@@ -152,6 +170,7 @@ else:
             col2.markdown(f"**Markering:** {srv.byggeri_markering or '—'}")
             col2.markdown(f"**Handling:** {srv.action_note or '—'}")
             st.markdown(f"**Resumé:** {srv.summary or '—'}")
+            st.markdown(f"**Scope-grundlag:** {srv.scope_basis or '—'}")
             st.caption(f"ID: {srv.servitut_id} | Kilde: {srv.source_document}")
             if srv.evidence:
                 st.markdown("**Evidens:**")

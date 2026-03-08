@@ -25,6 +25,10 @@ class Servitut(BaseModel):
     construction_relevance: bool = False
     byggeri_markering: Optional[str] = None  # sort | orange | rød
     action_note: Optional[str] = None
+    applies_to_matrikler: List[str] = Field(default_factory=list)
+    applies_to_target_matrikel: Optional[bool] = None
+    scope_basis: Optional[str] = None
+    scope_confidence: Optional[float] = None
     confidence: float = 0.0
     evidence: List[Evidence] = Field(default_factory=list)
     flags: List[str] = Field(default_factory=list)

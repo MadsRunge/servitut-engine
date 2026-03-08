@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from app.core.logging import get_logger
 from app.models.case import Case
-from app.services import storage_service
+from app.services import matrikel_service, storage_service
 from app.utils.ids import generate_case_id
 
 logger = get_logger(__name__)
@@ -49,3 +49,15 @@ def add_document_to_case(case_id: str, doc_id: str) -> Optional[Case]:
         case.document_ids.append(doc_id)
         storage_service.save_case(case)
     return case
+
+
+def sync_case_matrikler(case_id: str) -> Optional[Case]:
+    return matrikel_service.sync_case_matrikler(case_id)
+
+
+def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
+    return matrikel_service.update_target_matrikel(case_id, matrikelnummer)
+
+
+def mark_extraction_target(case_id: str, target_matrikel: Optional[str]) -> Optional[Case]:
+    return matrikel_service.mark_extraction_target(case_id, target_matrikel)

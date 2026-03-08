@@ -5,6 +5,17 @@ Du har modtaget en liste over udtrukne servitutter med tilhørende evidens. Form
 2. Angiver eventuelle byggerelevante servitutter særskilt
 3. Anbefaler konkrete handlinger
 
+Rapporten skal udarbejdes for denne målmatrikel:
+{target_matrikel}
+
+Ejendommen omfatter disse matrikler:
+{all_matrikler_json}
+
+VIGTIGT:
+- Fokusér kun på servitutterne for målmatriklen.
+- Hvis en servitut er uklar men potentielt relevant for målmatriklen, må den gerne omtales forsigtigt.
+- Bemærkningerne må gerne forklare afgrænsningen til målmatriklen.
+
 Returner dit svar som et JSON-objekt med disse felter:
 - entries: Array af redegørelses-poster, én pr. servitut, med felterne:
   - nr: Løbenummer (1, 2, 3...)

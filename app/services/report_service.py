@@ -7,6 +7,7 @@ from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Servitut
 from app.services.llm_service import generate_text
+from app.services.matrikel_service import filter_servitutter_for_target
 from app.services.rag_service import find_relevant_chunks
 from app.utils.ids import generate_report_id
 
@@ -40,21 +41,30 @@ def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
     case_id: str,
+    target_matrikel: Optional[str] = None,
+    available_matrikler: Optional[List[str]] = None,
 ) -> Report:
     """Generate a structured report from extracted servitutter."""
     report_id = generate_report_id()
     prompt_template = _load_prompt()
+    available_matrikler = available_matrikler or []
+    filtered_servitutter = filter_servitutter_for_target(servitutter, target_matrikel)
 
     servitutter_json = json.dumps(
-        [s.model_dump() for s in servitutter],
+        [s.model_dump() for s in filtered_servitutter],
         ensure_ascii=False,
         indent=2,
         default=str,
     )
-    evidence_text = _build_evidence_text(servitutter, all_chunks)
+    evidence_text = _build_evidence_text(filtered_servitutter, all_chunks)
 
     prompt = prompt_template.replace("{servitutter_json}", servitutter_json)
     prompt = prompt.replace("{evidence_text}", evidence_text)
+    prompt = prompt.replace("{target_matrikel}", target_matrikel or "ikke valgt")
+    prompt = prompt.replace(
+        "{all_matrikler_json}",
+        json.dumps(available_matrikler, ensure_ascii=False),
+    )
 
     markdown_content: Optional[str] = None
     entries: List[ReportEntry] = []
@@ -91,7 +101,7 @@ def generate_report(
     except Exception as e:
         logger.error(f"Report generation error: {e}")
         # Fallback: build basic entries from servitutter
-        for i, srv in enumerate(servitutter, 1):
+        for i, srv in enumerate(filtered_servitutter, 1):
             entries.append(
                 ReportEntry(
                     nr=i,
@@ -109,6 +119,8 @@ def generate_report(
     report = Report(
         report_id=report_id,
         case_id=case_id,
+        target_matrikel=target_matrikel,
+        available_matrikler=available_matrikler,
         servitutter=entries,
         notes=notes,
         markdown_content=markdown_content,

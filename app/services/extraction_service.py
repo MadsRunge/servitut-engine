@@ -11,7 +11,7 @@ from app.services.extraction import (
     _prescreeen_chunks,
     enrich_canonical_list,
 )
-from app.services import storage_service
+from app.services import matrikel_service, storage_service
 
 logger = get_logger(__name__)
 
@@ -62,7 +62,9 @@ def extract_servitutter(
             "akt",
             progress_callback=progress_callback,
         )
-        return _dedup_akt_servitutter(akt_list)
+        result = _dedup_akt_servitutter(akt_list)
+        matrikel_service.mark_extraction_target(case_id, None)
+        return result
 
     # --- Pas 1: Tinglysningsattest ---
     logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
@@ -77,7 +79,12 @@ def extract_servitutter(
     )
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
+    case = matrikel_service.sync_case_matrikler(case_id, attest_by_doc.keys())
+    target_matrikel = case.target_matrikel if case else None
+    all_matrikler = [matrikel.matrikelnummer for matrikel in case.matrikler] if case else []
+
     if not akt_chunks:
+        matrikel_service.mark_extraction_target(case_id, target_matrikel)
         return canonical_list
 
     # --- Pas 2: Canonical-driven berigelse fra akter ---
@@ -86,9 +93,13 @@ def extract_servitutter(
     for c in akt_chunks:
         akt_by_doc.setdefault(c.document_id, []).append(c)
 
-    return enrich_canonical_list(
+    result = enrich_canonical_list(
         canonical_list,
         akt_by_doc,
         case_id,
+        target_matrikel=target_matrikel,
+        all_matrikler=all_matrikler,
         progress_callback=progress_callback,
     )
+    matrikel_service.mark_extraction_target(case_id, target_matrikel)
+    return result

@@ -12,8 +12,11 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
     updates: dict = {
         "confidence": max(canonical.confidence, akt_srv.confidence),
         "evidence": canonical.evidence + akt_srv.evidence,
+        "source_document": akt_srv.source_document,
     }
 
+    if akt_srv.akt_nr:
+        updates["akt_nr"] = akt_srv.akt_nr
     if akt_srv.summary:
         updates["summary"] = akt_srv.summary
     if akt_srv.beneficiary:
@@ -28,6 +31,14 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
         updates["byggeri_markering"] = akt_srv.byggeri_markering
     if akt_srv.construction_relevance:
         updates["construction_relevance"] = True
+    if akt_srv.applies_to_matrikler:
+        updates["applies_to_matrikler"] = akt_srv.applies_to_matrikler
+    if akt_srv.applies_to_target_matrikel is not None:
+        updates["applies_to_target_matrikel"] = akt_srv.applies_to_target_matrikel
+    if akt_srv.scope_basis:
+        updates["scope_basis"] = akt_srv.scope_basis
+    if akt_srv.scope_confidence is not None:
+        updates["scope_confidence"] = akt_srv.scope_confidence
 
     return canonical.model_copy(update=updates)
 

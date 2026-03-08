@@ -5,13 +5,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from app.services import case_service, storage_service
+from app.services import case_service, matrikel_service, storage_service
 from streamlit_app.ui import (
     render_case_banner,
     render_case_stats,
     render_empty_state,
     render_section,
     select_case,
+    select_target_matrikel,
     setup_page,
 )
 
@@ -22,10 +23,20 @@ setup_page(
 )
 
 case = select_case()
+case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-servitutter = storage_service.list_servitutter(case.case_id)
+if matrikel_service.extraction_is_stale(case):
+    st.warning(
+        "Reviewet vises med stale extraction-data for den valgte målmatrikel. "
+        "Kør extraction igen for at få opdaterede scope-vurderinger."
+    )
+
+servitutter = matrikel_service.filter_servitutter_for_target(
+    storage_service.list_servitutter(case.case_id),
+    case.target_matrikel,
+)
 if not servitutter:
     render_empty_state("Ingen servitutter", "Kør ekstraktion, før review og sporbarhed giver mening.")
     st.stop()
@@ -48,11 +59,17 @@ with col1:
     st.subheader(srv.title or "Ukendt titel")
     st.markdown(f"**Resumé:** {srv.summary or '—'}")
     st.markdown(f"**Dato/ref:** {srv.date_reference or '—'}")
+    st.markdown(f"**Matrikler:** {', '.join(srv.applies_to_matrikler) if srv.applies_to_matrikler else '—'}")
+    st.markdown(
+        "**Gælder målmatrikel:** "
+        f"{'Ja' if srv.applies_to_target_matrikel else 'Nej' if srv.applies_to_target_matrikel is False else 'Uafklaret'}"
+    )
     st.markdown(f"**Påtaleberettiget:** {srv.beneficiary or '—'}")
     st.markdown(f"**Rådighed/tilstand:** {srv.disposition_type or '—'}")
     st.markdown(f"**Retlig type:** {srv.legal_type or '—'}")
     st.markdown(f"**Byggerelevant:** {'Ja' if srv.construction_relevance else 'Nej'}")
     st.markdown(f"**Anbefalet handling:** {srv.action_note or '—'}")
+    st.markdown(f"**Scope-grundlag:** {srv.scope_basis or '—'}")
 
 with col2:
     st.metric("Confidence", f"{srv.confidence:.2f}")

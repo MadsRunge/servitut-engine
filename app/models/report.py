@@ -19,6 +19,8 @@ class Report(BaseModel):
     report_id: str
     case_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    target_matrikel: Optional[str] = None
+    available_matrikler: List[str] = Field(default_factory=list)
     servitutter: List[ReportEntry] = Field(default_factory=list)
     notes: Optional[str] = None
     markdown_content: Optional[str] = None

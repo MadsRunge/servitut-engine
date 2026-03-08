@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from app.services import case_service, storage_service
+from app.services import case_service, matrikel_service, storage_service
 from app.services.report_service import generate_report
 from streamlit_app.ui import (
     render_case_banner,
@@ -17,6 +17,7 @@ from streamlit_app.ui import (
     render_section,
     render_stat_cards,
     select_case,
+    select_target_matrikel,
     setup_page,
 )
 
@@ -27,20 +28,40 @@ setup_page(
 )
 
 case = select_case()
+case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-servitutter = storage_service.list_servitutter(case.case_id)
-render_section("Rapportgrundlag", f"{len(servitutter)} servitut(ter) er klar til rapportgenerering.")
+if matrikel_service.extraction_is_stale(case):
+    st.warning(
+        "Målmatriklen er ændret siden sidste extraction. "
+        "Kør extraction igen, før du genererer en ny redegørelse."
+    )
 
-if st.button("Generer rapport", type="primary"):
+servitutter = matrikel_service.filter_servitutter_for_target(
+    storage_service.list_servitutter(case.case_id),
+    case.target_matrikel,
+)
+render_section(
+    "Rapportgrundlag",
+    f"{len(servitutter)} servitut(ter) er klar til rapportgenerering for matrikel "
+    f"`{case.target_matrikel or 'ikke valgt'}`.",
+)
+
+if st.button("Generer rapport", type="primary", disabled=matrikel_service.extraction_is_stale(case)):
     if not servitutter:
         st.error("Ingen servitutter — kør ekstraktion først.")
     else:
         all_chunks = storage_service.load_all_chunks(case.case_id)
         with st.spinner("Genererer rapport..."):
             try:
-                report = generate_report(servitutter, all_chunks, case.case_id)
+                report = generate_report(
+                    servitutter,
+                    all_chunks,
+                    case.case_id,
+                    target_matrikel=case.target_matrikel,
+                    available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
+                )
                 storage_service.save_report(report)
                 st.success(f"Rapport genereret: `{report.report_id}`")
                 st.rerun()
@@ -55,6 +76,14 @@ if not reports:
 
 def _build_markdown_report(report) -> str:
     parts = [f"# Rapport {report.report_id}", ""]
+    if report.target_matrikel:
+        parts.extend(
+            [
+                f"**Målmatrikel:** {report.target_matrikel}",
+                f"**Ejendommens matrikler:** {', '.join(report.available_matrikler) or 'Ikke angivet'}",
+                "",
+            ]
+        )
     if report.notes:
         parts.extend(["## Bemærkninger", report.notes, ""])
 
@@ -84,6 +113,8 @@ def _build_html_report(report, case) -> str:
     case_name = case.name
     address = case.address or "Ikke angivet"
     external_ref = case.external_ref or "Ikke angivet"
+    target_matrikel = report.target_matrikel or "Ikke valgt"
+    all_matrikler = ", ".join(report.available_matrikler) or "Ikke angivet"
     relevant_count = sum(1 for entry in report.servitutter if entry.relevant_for_project)
     non_relevant_count = max(0, len(report.servitutter) - relevant_count)
 
@@ -424,6 +455,10 @@ def _build_html_report(report, case) -> str:
                     <div class="meta-label">Journal / Reference</div>
                     <div class="meta-value">{html.escape(external_ref)}</div>
                   </div>
+                  <div class="meta-card">
+                    <div class="meta-label">Målmatrikel</div>
+                    <div class="meta-value">{html.escape(target_matrikel)}</div>
+                  </div>
                 </div>
               </section>
 
@@ -443,6 +478,14 @@ def _build_html_report(report, case) -> str:
                 <div class="summary-card">
                   <div class="summary-number">{report.created_at:%d.%m.%Y}</div>
                   <div class="summary-copy">Rapportdato</div>
+                </div>
+              </section>
+
+              <section>
+                <h2>Afgrænsning</h2>
+                <div class="notes">
+                  <p>Redegørelsen er afgrænset til målmatriklen <strong>{html.escape(target_matrikel)}</strong>.
+                  Ejendommen omfatter matriklerne {html.escape(all_matrikler)}.</p>
                 </div>
               </section>
 
@@ -481,7 +524,8 @@ def _build_html_report(report, case) -> str:
               <div class="report-table-meta">
                 Rapport-id: {html.escape(report.report_id)}<br />
                 Oprettet: {report.created_at}<br />
-                Journal / Reference: {html.escape(external_ref)}
+                Journal / Reference: {html.escape(external_ref)}<br />
+                Målmatrikel: {html.escape(target_matrikel)}
               </div>
             </div>
             {note_block}
@@ -508,6 +552,11 @@ for report in reports:
                 ("Øvrige", str(max(0, len(report.servitutter) - relevant_count)), "Kræver evt. sekundær vurdering"),
             ]
         )
+        if report.target_matrikel:
+            st.caption(
+                f"Målmatrikel: {report.target_matrikel} · "
+                f"Ejendommens matrikler: {', '.join(report.available_matrikler) or '—'}"
+            )
         if report.notes:
             st.info(report.notes)
 

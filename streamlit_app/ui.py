@@ -6,7 +6,7 @@ from typing import Iterable
 import streamlit as st
 
 from app.models.report import ReportEntry
-from app.services import case_service, storage_service
+from app.services import case_service, matrikel_service, storage_service
 
 
 PIPELINE_STEPS = [
@@ -437,8 +437,43 @@ def render_case_banner(case) -> None:
         chips.append(f'<span class="case-chip">{case.address}</span>')
     if case.external_ref:
         chips.append(f'<span class="case-chip">Ref: {case.external_ref}</span>')
+    if case.target_matrikel:
+        chips.append(f'<span class="case-chip">Målmatrikel: {case.target_matrikel}</span>')
+    if case.matrikler:
+        chips.append(f'<span class="case-chip">{len(case.matrikler)} matrikler på ejendommen</span>')
     chips.append(f'<span class="case-chip">Status: {case.status}</span>')
     st.markdown("".join(chips), unsafe_allow_html=True)
+
+
+def select_target_matrikel(case, key: str = "target_matrikel"):
+    case = matrikel_service.sync_case_matrikler(case.case_id) or case
+
+    if not case.matrikler:
+        st.info("Ingen matrikler fundet endnu. Kør OCR på tinglysningsattesten for at aktivere matrikelvalg.")
+        return case
+
+    labels = {
+        (
+            f"{matrikel.matrikelnummer} · {matrikel.landsejerlav or 'Ukendt landsejerlav'}"
+            + (f" · {matrikel.areal_m2} m2" if matrikel.areal_m2 else "")
+        ): matrikel.matrikelnummer
+        for matrikel in case.matrikler
+    }
+    current_value = case.target_matrikel or case.matrikler[0].matrikelnummer
+    options = list(labels.keys())
+    index = next((i for i, label in enumerate(options) if labels[label] == current_value), 0)
+
+    selected_label = st.selectbox(
+        "Målmatrikel",
+        options,
+        index=index,
+        key=f"{key}_{case.case_id}",
+        help="Redegørelsen og scope-vurderingen køres for den valgte matrikel på ejendommen.",
+    )
+    selected_value = labels[selected_label]
+    if selected_value != case.target_matrikel:
+        case = case_service.update_target_matrikel(case.case_id, selected_value) or case
+    return case
 
 
 def render_case_stats(case_id: str) -> CaseStats:
