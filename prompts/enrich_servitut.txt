@@ -6,9 +6,6 @@ Din opgave er at finde de servitutter fra listen, som faktisk er beskrevet i akt
 EJENDOMMENS MATRIKLER:
 {all_matrikler_json}
 
-VALGT MÅLMATRIKEL:
-{target_matrikel}
-
 KENDTE SERVITUTTER (fra tinglysningsattest):
 {canonical_json}
 
@@ -25,14 +22,19 @@ For HVER servitut du genkender i akten, returner et JSON-objekt med disse felter
     "orange" — Der skal tages stilling til servitutten (fx mulig aflysning, uafklaret omfang, ledninger der kan flyttes)
     "sort"   — Servitutten vedrører ikke projektområdet eller har ingen byggerelevans
 - action_note: Anbefalet handling (fx "Kontakt Vejdirektoratet for evt. aflysning", "Ingen handling nødvendig").
-- applies_to_matrikler: Liste over matrikelnumre fra ejendommens matrikler, som servitutten efter din vurdering gælder for. Brug kun værdier fra listen ovenfor.
-- scope_basis: Kort begrundelse med henvisning til tekst/rids-beskrivelse i akten for hvorfor servitutten vurderes at gælde eller ikke gælde målmatriklen.
+- applies_to_matrikler: Liste over matrikelnumre fra ejendommens matrikler, som servitutten gælder for.
+    REGLER FOR SCOPE-VURDERING:
+    * Brug KUN matrikelnumre der er eksplicit nævnt i aktteksten (fx "matr.nr. 5ay", "parcellen 5a", rids-beskrivelse).
+    * Hvis akten beskriver en ledning, vej eller byggelinje med et geometrisk forløb — inkludér kun de matrikler der er nævnt i beskrivelsenafgræns.
+    * Hvis akten gælder alle matrikler i ejendommen eksplicit — inkludér alle fra listen.
+    * Hvis du er usikker, eller aktteksten ikke nævner specifikke matrikler — returner en tom liste [].
+    * Gæt ALDRIG på scope. Hellere [] end et forkert matrikelnummer.
+- scope_basis: Citat eller kort beskrivelse fra aktteksten der begrunder din scope-vurdering (fx "Akten nævner 'matr. 5ay Aalborg Markjorder'" eller "Ingen specifik matrikel nævnt i aktteksten").
 - scope_confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på scope-vurderingen.
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket.
 
 VIGTIGT:
 - Returner KUN servitutter du med rimelig sikkerhed kan genkende i aktuddraget.
-- Brug målmatriklen aktivt i vurderingen af applies_to_matrikler og scope_basis, men returner ikke et separat true/false-felt for målmatriklen.
 - Returner et TOMT array [] hvis ingen af de kendte servitutter er beskrevet i dette aktuddrag.
 - Returner KUN et JSON-array. Ingen forklarende tekst før eller efter.
 

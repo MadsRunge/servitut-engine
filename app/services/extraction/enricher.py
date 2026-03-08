@@ -5,7 +5,6 @@ from typing import List, Optional
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
-from app.services import matrikel_service
 from app.services.extraction.llm_extractor import _build_chunks_text, _parse_llm_response
 from app.services.extraction.merger import _enrich_canonical
 from app.services.extraction.progress import ProgressCallback, _emit_progress
@@ -121,7 +120,6 @@ def _enrich_from_doc(
     doc_id: str,
     chunk_list: List[Chunk],
     canonical_list: List[Servitut],
-    target_matrikel: Optional[str],
     all_matrikler: List[str],
     progress_callback: Optional[ProgressCallback],
 ) -> List[dict]:
@@ -141,7 +139,6 @@ def _enrich_from_doc(
     prompt = (
         prompt_template
         .replace("{canonical_json}", canonical_json)
-        .replace("{target_matrikel}", target_matrikel or "ikke valgt")
         .replace("{all_matrikler_json}", json.dumps(all_matrikler, ensure_ascii=False))
         .replace("{chunks_text}", chunks_text)
     )
@@ -188,7 +185,6 @@ def enrich_canonical_list(
     canonical_list: List[Servitut],
     akt_chunks_by_doc: dict[str, List[Chunk]],
     case_id: str,
-    target_matrikel: Optional[str] = None,
     all_matrikler: Optional[List[str]] = None,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> List[Servitut]:
@@ -233,7 +229,6 @@ def enrich_canonical_list(
             doc_id,
             chunk_list,
             canonical_list,
-            target_matrikel,
             all_matrikler,
             progress_callback,
         )
@@ -278,10 +273,6 @@ def enrich_canonical_list(
                 byggeri_markering=item.get("byggeri_markering"),
                 action_note=item.get("action_note"),
                 applies_to_matrikler=applies_to_matrikler,
-                applies_to_target_matrikel=matrikel_service.resolve_target_matrikel_scope(
-                    applies_to_matrikler,
-                    target_matrikel,
-                ),
                 scope_basis=item.get("scope_basis"),
                 scope_confidence=item.get("scope_confidence"),
                 confidence=float(item.get("confidence", 0.5) or 0.5),

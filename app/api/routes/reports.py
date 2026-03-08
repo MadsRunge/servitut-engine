@@ -15,12 +15,6 @@ def create_report(case_id: str):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     case = case_service.sync_case_matrikler(case_id) or case
-    if matrikel_service.extraction_is_stale(case):
-        raise HTTPException(
-            status_code=400,
-            detail="Target matrikel changed since last extraction — rerun extraction first",
-        )
-
     servitutter = storage_service.list_servitutter(case_id)
     if not servitutter:
         raise HTTPException(status_code=400, detail="No servitutter found — run extraction first")

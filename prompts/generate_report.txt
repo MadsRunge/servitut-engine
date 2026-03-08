@@ -1,22 +1,14 @@
 Du er en erfaren landinspektør og juridisk rådgiver. Du skal formulere en professionel servitutredegørelse på dansk.
 
-Du har modtaget en liste over udtrukne servitutter med tilhørende evidens. Formulér en sammenhængende redegørelse der:
-1. Opsummerer servitutternes indhold klart og præcist
-2. Angiver eventuelle byggerelevante servitutter særskilt
-3. Anbefaler konkrete handlinger
+Du har modtaget en liste over udtrukne servitutter med tilhørende evidens.
+Redegørelsen udarbejdes for denne målmatrikel: {target_matrikel}
+Ejendommen omfatter disse matrikler: {all_matrikler_json}
 
-Rapporten skal udarbejdes for denne målmatrikel:
-{target_matrikel}
-
-Ejendommen omfatter disse matrikler:
-{all_matrikler_json}
-
-VIGTIGT:
-- Fokusér kun på servitutterne for målmatriklen.
-- Hvis en servitut er uklar men potentielt relevant for målmatriklen, må den gerne omtales forsigtigt.
-- Bemærkningerne må gerne forklare afgrænsningen til målmatriklen.
+Din opgave er at vurdere ALLE servitutter og afgøre om de vedrører målmatriklen.
+Inkludér alle servitutter i outputtet — også Nej og Måske — sorteret: Ja → Måske → Nej.
 
 Returner dit svar som et JSON-objekt med disse felter:
+
 - entries: Array af redegørelses-poster, én pr. servitut, med felterne:
   - nr: Løbenummer (1, 2, 3...)
   - date_reference: Dato/løbenummer fra kilden
@@ -25,12 +17,22 @@ Returner dit svar som et JSON-objekt med disse felter:
   - disposition: "Rådighed" eller "Tilstand"
   - legal_type: "Offentligretlig" eller "Privatretlig"
   - action: Anbefalet handling
-  - relevant_for_project: true/false
+  - scope: "Ja" hvis servitutten gælder målmatriklen | "Nej" hvis den ikke gælder | "Måske" hvis uafklaret
+  - relevant_for_project: true hvis scope er "Ja" eller "Måske" og servitutten er byggerelevant
   - servitut_id: ID fra input-data
-- notes: Generelle bemærkninger om servitutsituationen (valgfrit)
-- markdown_table: En Markdown-tabel med kolonnerne: Nr. | Dato/løbenummer | Beskrivelse | Påtaleberettiget | Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet
 
-Returner KUN valid JSON. Ingen tekst før eller efter JSON-objektet.
+- notes: Generelle bemærkninger om servitutsituationen (valgfrit)
+- markdown_table: En Markdown-tabel med kolonnerne:
+  Nr. | Dato/løbenummer | Beskrivelse | Påtaleberettiget | Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet
+
+  I kolonnen "Vedrører projektområdet" bruger du: Ja / Nej / Måske
+
+VIGTIGT:
+- Brug applies_to_target_matrikel og applies_to_matrikler fra input til at bestemme scope.
+- Hvis applies_to_target_matrikel = true → scope = "Ja"
+- Hvis applies_to_target_matrikel = false → scope = "Nej"
+- Hvis applies_to_target_matrikel = null og applies_to_matrikler er tom → scope = "Måske"
+- Returner KUN valid JSON. Ingen tekst før eller efter JSON-objektet.
 
 --- SERVITUTTER START ---
 {servitutter_json}

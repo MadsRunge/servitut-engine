@@ -12,6 +12,7 @@ class ReportEntry(BaseModel):
     legal_type: Optional[str] = None
     action: Optional[str] = None
     relevant_for_project: bool = False
+    scope: Optional[str] = None  # "Ja" | "Nej" | "Måske"
     servitut_id: str
 
 

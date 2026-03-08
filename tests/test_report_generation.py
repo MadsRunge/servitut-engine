@@ -124,17 +124,18 @@ def test_report_uses_explicit_report_model_override(monkeypatch):
     assert kwargs["model"] == "deepseek-chat"
 
 
-def test_report_filters_out_servitutter_marked_for_other_matrikel():
+def test_report_includes_all_servitutter_with_scope_annotation():
+    """All servitutter appear in the report prompt — Ja/Nej/Måske set by LLM, not filtered."""
     included = make_mock_servitut(1)
     included.title = "Servitut for 0005ay"
-    included.applies_to_target_matrikel = True
-    excluded = make_mock_servitut(2)
-    excluded.title = "Servitut for anden matrikel"
-    excluded.applies_to_target_matrikel = False
+    included.applies_to_matrikler = ["0005ay"]
+    other = make_mock_servitut(2)
+    other.title = "Servitut for anden matrikel"
+    other.applies_to_matrikler = ["0518p"]
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
         generate_report(
-            [included, excluded],
+            [included, other],
             make_mock_chunks(),
             "case-test",
             target_matrikel="0005ay",
@@ -143,7 +144,8 @@ def test_report_filters_out_servitutter_marked_for_other_matrikel():
 
     prompt = mock_generate_text.call_args[0][0]
     assert "Servitut for 0005ay" in prompt
-    assert "Servitut for anden matrikel" not in prompt
+    # Both are sent to the LLM so it can assign Ja/Nej/Måske
+    assert "Servitut for anden matrikel" in prompt
 
 
 def test_report_entry_model():

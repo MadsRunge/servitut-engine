@@ -1,6 +1,7 @@
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 from queue import Queue
+import re
 import threading
 from typing import List, Optional
 
@@ -20,6 +21,8 @@ from app.utils.text import has_servitut_keywords
 
 logger = get_logger(__name__)
 
+_JSON_LIST_KEYS = ("servitutter", "matches", "items", "results", "data")
+
 
 def _prescreeen_chunks(chunks: List[Chunk]) -> List[Chunk]:
     relevant = [chunk for chunk in chunks if has_servitut_keywords(chunk.text, threshold=1)]
@@ -36,19 +39,61 @@ def _build_chunks_text(chunks: List[Chunk]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def _coerce_payload_to_list(payload: object) -> list:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in _JSON_LIST_KEYS:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        if payload.get("date_reference") or payload.get("title") or payload.get("akt_nr"):
+            return [payload]
+    return []
+
+
+def _try_parse_json_candidate(candidate: str) -> list:
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return []
+    return _coerce_payload_to_list(payload)
+
+
+def _extract_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped:
+        candidates.append(stripped)
+
+    fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+    for opener, closer in (("[", "]"), ("{", "}")):
+        start = text.find(opener)
+        end = text.rfind(closer)
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start : end + 1].strip()
+            if candidate:
+                candidates.append(candidate)
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(candidates))
+
+
 def _parse_llm_response(response_text: str) -> list:
     text = response_text.strip()
-    start = text.find("[")
-    end = text.rfind("]")
-    if start == -1 or end == -1:
-        logger.warning("No JSON array found in LLM response")
+    if not text:
+        logger.warning("LLM response was empty")
         return []
-    try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        logger.error(f"JSON parse error: {exc}")
-        logger.debug(f"Raw response: {text[:500]}")
-        return []
+
+    for candidate in _extract_json_candidates(text):
+        parsed = _try_parse_json_candidate(candidate)
+        if parsed or candidate == "[]":
+            return parsed
+
+    logger.warning(f"No parseable JSON payload found in LLM response: {text[:200]!r}")
+    return []
 
 
 def _find_evidence_chunk(chunks: List[Chunk], doc_id: str) -> List[Evidence]:
@@ -62,6 +107,13 @@ def _find_evidence_chunk(chunks: List[Chunk], doc_id: str) -> List[Evidence]:
         )
         for chunk in doc_chunks[:3]
     ]
+
+
+def _max_tokens_for_source_type(source_type: str) -> int:
+    if source_type == "tinglysningsattest":
+        # A long attest can contain dozens of servitutter. Give it more room than akt enrichment.
+        return 8192
+    return 4096
 
 
 def _extract_document_servitutter(
@@ -104,7 +156,7 @@ def _extract_document_servitutter(
             message="Sender LLM-kald",
             worker=worker_name,
         )
-        response_text = generate_text(prompt, max_tokens=4096)
+        response_text = generate_text(prompt, max_tokens=_max_tokens_for_source_type(source_type))
         _emit_progress(
             callback,
             doc_id=doc_id,

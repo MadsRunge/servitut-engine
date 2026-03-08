@@ -167,3 +167,71 @@ def test_extract_document_servitutter_emits_progress_events():
         "completed",
     ]
     assert events[-1]["servitut_count"] == 1
+
+
+def test_parse_llm_response_accepts_wrapped_json_object():
+    response = """
+    ```json
+    {
+      "servitutter": [
+        {"date_reference": "01.01.2000-1-1", "title": "Test"}
+      ]
+    }
+    ```
+    """
+
+    parsed = llm_extractor._parse_llm_response(response)
+
+    assert parsed == [{"date_reference": "01.01.2000-1-1", "title": "Test"}]
+
+
+def test_parse_llm_response_accepts_single_servitut_object():
+    response = '{"date_reference":"01.01.2000-1-1","akt_nr":"40 B 405","title":"Test"}'
+
+    parsed = llm_extractor._parse_llm_response(response)
+
+    assert parsed == [
+        {
+            "date_reference": "01.01.2000-1-1",
+            "akt_nr": "40 B 405",
+            "title": "Test",
+        }
+    ]
+
+
+def test_extract_document_servitutter_handles_wrapped_response():
+    chunk = make_chunk("doc-a")
+
+    with patch(
+        "app.services.extraction.llm_extractor.generate_text",
+        return_value='{"servitutter":[{"title":"Test","date_reference":"01.01.2000-1-1","confidence":0.8}]}',
+    ):
+        result = extraction_service._extract_document_servitutter(
+            "doc-a",
+            [chunk],
+            "case-test",
+            "Prompt {chunks_text}",
+            "akt",
+        )
+
+    assert len(result) == 1
+    assert result[0].title == "Test"
+    assert result[0].date_reference == "01.01.2000-1-1"
+
+
+def test_extract_document_servitutter_uses_larger_token_budget_for_attest():
+    chunk = make_chunk("doc-a")
+
+    with patch(
+        "app.services.extraction.llm_extractor.generate_text",
+        return_value="[]",
+    ) as mock_generate:
+        extraction_service._extract_document_servitutter(
+            "doc-a",
+            [chunk],
+            "case-test",
+            "Prompt {chunks_text}",
+            "tinglysningsattest",
+        )
+
+    assert mock_generate.call_args.kwargs["max_tokens"] == 8192

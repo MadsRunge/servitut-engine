@@ -85,6 +85,7 @@ def generate_report(
             markdown_content = data.get("markdown_table")
             notes = data.get("notes")
             for i, entry_data in enumerate(data.get("entries", []), 1):
+                scope_val = entry_data.get("scope")
                 entries.append(
                     ReportEntry(
                         nr=i,
@@ -94,7 +95,8 @@ def generate_report(
                         disposition=entry_data.get("disposition"),
                         legal_type=entry_data.get("legal_type"),
                         action=entry_data.get("action"),
-                        relevant_for_project=entry_data.get("relevant_for_project", False),
+                        relevant_for_project=scope_val == "Ja",
+                        scope=scope_val,
                         servitut_id=entry_data.get("servitut_id", ""),
                     )
                 )
@@ -102,6 +104,11 @@ def generate_report(
         logger.error(f"Report generation error: {e}")
         # Fallback: build basic entries from servitutter
         for i, srv in enumerate(filtered_servitutter, 1):
+            scope = (
+                "Ja" if srv.applies_to_target_matrikel is True
+                else "Nej" if srv.applies_to_target_matrikel is False
+                else "Måske"
+            )
             entries.append(
                 ReportEntry(
                     nr=i,
@@ -111,7 +118,8 @@ def generate_report(
                     disposition=srv.disposition_type,
                     legal_type=srv.legal_type,
                     action=srv.action_note,
-                    relevant_for_project=srv.construction_relevance,
+                    relevant_for_project=srv.applies_to_target_matrikel is True,
+                    scope=scope,
                     servitut_id=srv.servitut_id,
                 )
             )

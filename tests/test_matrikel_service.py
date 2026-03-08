@@ -67,14 +67,3 @@ def test_resolve_target_matrikel_scope_is_deterministic():
     assert matrikel_service.resolve_target_matrikel_scope(["0005ay", "0518p"], "0005ay") is True
     assert matrikel_service.resolve_target_matrikel_scope(["0518p"], "0005ay") is False
     assert matrikel_service.resolve_target_matrikel_scope([], "0005ay") is None
-
-
-def test_extraction_is_stale_when_target_changes():
-    case = Case(
-        case_id="case-test",
-        name="Test",
-        target_matrikel="0005ay",
-        last_extracted_target_matrikel="0518p",
-    )
-
-    assert matrikel_service.extraction_is_stale(case) is True

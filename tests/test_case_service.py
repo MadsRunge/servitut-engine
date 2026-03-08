@@ -11,7 +11,6 @@ from app.services.case_service import (
     delete_case,
     get_case,
     list_cases,
-    mark_extraction_target,
     update_target_matrikel,
     update_case_status,
 )
@@ -106,9 +105,3 @@ def test_update_target_matrikel():
     assert loaded is not None
     assert loaded.target_matrikel == "0005ay"
 
-
-def test_mark_extraction_target():
-    case = create_case("Extraction target test")
-    updated = mark_extraction_target(case.case_id, "0005ay")
-    assert updated is not None
-    assert updated.last_extracted_target_matrikel == "0005ay"

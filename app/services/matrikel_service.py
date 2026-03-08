@@ -82,8 +82,6 @@ def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
     if valid_targets and normalized not in valid_targets:
         return case
 
-    if case.target_matrikel and case.target_matrikel != normalized:
-        case.status = "created"
     case.target_matrikel = normalized
     storage_service.save_case(case)
     return case
@@ -103,25 +101,22 @@ def resolve_target_matrikel_scope(
     return normalized_target in normalized_matrikler
 
 
-def extraction_is_stale(case: Optional[Case]) -> bool:
-    if not case or not case.target_matrikel:
-        return False
-    return case.last_extracted_target_matrikel != case.target_matrikel
-
-
-def mark_extraction_target(case_id: str, target_matrikel: Optional[str]) -> Optional[Case]:
-    case = storage_service.load_case(case_id)
-    if not case:
-        return None
-    case.last_extracted_target_matrikel = target_matrikel.strip().lower() if target_matrikel else None
-    storage_service.save_case(case)
-    return case
-
-
 def filter_servitutter_for_target(
     servitutter: List[Servitut],
     target_matrikel: Optional[str],
 ) -> List[Servitut]:
+    """
+    Annotate all servitutter with applies_to_target_matrikel computed dynamically
+    from applies_to_matrikler.  Returns ALL servitutter (Ja + Nej + Måske) so the
+    report can show the full picture — matching a real redegørelse.
+    """
     if not target_matrikel:
         return servitutter
-    return [srv for srv in servitutter if srv.applies_to_target_matrikel is not False]
+    return [
+        srv.model_copy(update={
+            "applies_to_target_matrikel": resolve_target_matrikel_scope(
+                srv.applies_to_matrikler, target_matrikel
+            )
+        })
+        for srv in servitutter
+    ]

@@ -4,23 +4,16 @@ Du analyserer en TINGLYSNINGSATTEST — et officielt register over alle tinglyst
 Din eneste opgave er at udtræke den autoritative liste over servitutter med løbenummer og titel.
 
 VIGTIGT:
-- Udtræk KUN date_reference, akt_nr og title — sæt alle andre felter til null
+- Udtræk KUN date_reference, akt_nr, title og confidence
 - Løbenummeret (fx "09.02.1957-490-40") er kritisk — kopiér det præcist som det står
 - akt_nr er aktens identifikator/volumenummer (fx "40 B 405", "23 M 20", "B-405") — kopiér præcist som det fremgår
 - Titlen skal være kort og præcis baseret på beskrivelsen i attesten
-- De øvrige felter udfyldes fra de individuelle akter — ikke herfra
+- Returner ikke summary, beneficiary, disposition_type, legal_type, construction_relevance, byggeri_markering eller action_note. De udfyldes senere fra akterne.
 
 For hver servitut, returner et JSON-objekt med disse felter:
 - date_reference: Dato og løbenummer præcist som angivet (fx "09.02.1957-490-40"). Brug null hvis ukendt.
 - akt_nr: Aktens identifikator/nummer præcist som angivet (fx "40 B 405", "40B405"). Brug null hvis ikke angivet.
 - title: Kort, præcis titel (fx "Vejbyggelinje fra Billeshavevej", "Afløbsledning", "Vandstandsregulering").
-- summary: null
-- beneficiary: null
-- disposition_type: null
-- legal_type: null
-- construction_relevance: false
-- byggeri_markering: null
-- action_note: null
 - confidence: 1.0 for klart listede servitutter med løbenummer, lavere hvis usikker.
 
 Returner KUN et JSON-array med servitut-objekter. Ingen forklarende tekst før eller efter.

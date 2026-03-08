@@ -27,11 +27,6 @@ case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-if matrikel_service.extraction_is_stale(case):
-    st.warning(
-        "Reviewet vises med stale extraction-data for den valgte målmatrikel. "
-        "Kør extraction igen for at få opdaterede scope-vurderinger."
-    )
 
 servitutter = matrikel_service.filter_servitutter_for_target(
     storage_service.list_servitutter(case.case_id),

@@ -57,7 +57,3 @@ def sync_case_matrikler(case_id: str) -> Optional[Case]:
 
 def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
     return matrikel_service.update_target_matrikel(case_id, matrikelnummer)
-
-
-def mark_extraction_target(case_id: str, target_matrikel: Optional[str]) -> Optional[Case]:
-    return matrikel_service.mark_extraction_target(case_id, target_matrikel)

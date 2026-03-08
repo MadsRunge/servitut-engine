@@ -62,9 +62,7 @@ def extract_servitutter(
             "akt",
             progress_callback=progress_callback,
         )
-        result = _dedup_akt_servitutter(akt_list)
-        matrikel_service.mark_extraction_target(case_id, None)
-        return result
+        return _dedup_akt_servitutter(akt_list)
 
     # --- Pas 1: Tinglysningsattest ---
     logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
@@ -80,11 +78,9 @@ def extract_servitutter(
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
     case = matrikel_service.sync_case_matrikler(case_id, attest_by_doc.keys())
-    target_matrikel = case.target_matrikel if case else None
     all_matrikler = [matrikel.matrikelnummer for matrikel in case.matrikler] if case else []
 
     if not akt_chunks:
-        matrikel_service.mark_extraction_target(case_id, target_matrikel)
         return canonical_list
 
     # --- Pas 2: Canonical-driven berigelse fra akter ---
@@ -93,13 +89,10 @@ def extract_servitutter(
     for c in akt_chunks:
         akt_by_doc.setdefault(c.document_id, []).append(c)
 
-    result = enrich_canonical_list(
+    return enrich_canonical_list(
         canonical_list,
         akt_by_doc,
         case_id,
-        target_matrikel=target_matrikel,
         all_matrikler=all_matrikler,
         progress_callback=progress_callback,
     )
-    matrikel_service.mark_extraction_target(case_id, target_matrikel)
-    return result

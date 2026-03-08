@@ -28,27 +28,61 @@ setup_page(
 )
 
 case = select_case()
-case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-if matrikel_service.extraction_is_stale(case):
-    st.warning(
-        "Målmatriklen er ændret siden sidste extraction. "
-        "Kør extraction igen, før du genererer en ny redegørelse."
-    )
+# --- Matrikelvalg ---
+render_section(
+    "Vælg matrikel",
+    "Redegørelsen udarbejdes for én matrikel ad gangen. Vælg hvilken matrikel rapporten skal gælde for.",
+)
+
+if not case.matrikler:
+    st.warning("Ingen matrikler fundet på sagen. Kør OCR på tinglysningsattesten for at aktivere matrikelvalg.", icon="⚠️")
+    st.stop()
+
+matrikel_labels = {
+    f"{m.matrikelnummer} · {m.landsejerlav or 'Ukendt landsejerlav'}"
+    + (f" · {m.areal_m2} m²" if m.areal_m2 else ""): m.matrikelnummer
+    for m in case.matrikler
+}
+current = case.target_matrikel or case.matrikler[0].matrikelnummer
+options = list(matrikel_labels.keys())
+idx = next((i for i, lbl in enumerate(options) if matrikel_labels[lbl] == current), 0)
+
+selected_label = st.radio(
+    "Målmatrikel for denne redegørelse",
+    options,
+    index=idx,
+    horizontal=len(options) <= 4,
+)
+selected_matrikel = matrikel_labels[selected_label]
+
+if selected_matrikel != case.target_matrikel:
+    case = matrikel_service.update_target_matrikel(case.case_id, selected_matrikel) or case
+
+st.divider()
 
 servitutter = matrikel_service.filter_servitutter_for_target(
     storage_service.list_servitutter(case.case_id),
-    case.target_matrikel,
-)
-render_section(
-    "Rapportgrundlag",
-    f"{len(servitutter)} servitut(ter) er klar til rapportgenerering for matrikel "
-    f"`{case.target_matrikel or 'ikke valgt'}`.",
+    selected_matrikel,
 )
 
-if st.button("Generer rapport", type="primary", disabled=matrikel_service.extraction_is_stale(case)):
+ja = sum(1 for s in servitutter if s.applies_to_target_matrikel is True)
+mske = sum(1 for s in servitutter if s.applies_to_target_matrikel is None)
+nej = sum(1 for s in servitutter if s.applies_to_target_matrikel is False)
+
+st.info(
+    f"**{len(servitutter)} servitutter** for **{selected_matrikel}** — "
+    f"**{ja} Ja** · **{mske} Måske** · **{nej} Nej**",
+    icon="📋",
+)
+
+if not servitutter:
+    st.warning("Ingen servitutter — kør ekstraktion først.")
+    st.stop()
+
+if st.button("Generer redegørelse", type="primary"):
     if not servitutter:
         st.error("Ingen servitutter — kør ekstraktion først.")
     else:
@@ -59,8 +93,8 @@ if st.button("Generer rapport", type="primary", disabled=matrikel_service.extrac
                     servitutter,
                     all_chunks,
                     case.case_id,
-                    target_matrikel=case.target_matrikel,
-                    available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
+                    target_matrikel=selected_matrikel,
+                    available_matrikler=[m.matrikelnummer for m in case.matrikler],
                 )
                 storage_service.save_report(report)
                 st.success(f"Rapport genereret: `{report.report_id}`")
@@ -115,8 +149,9 @@ def _build_html_report(report, case) -> str:
     external_ref = case.external_ref or "Ikke angivet"
     target_matrikel = report.target_matrikel or "Ikke valgt"
     all_matrikler = ", ".join(report.available_matrikler) or "Ikke angivet"
-    relevant_count = sum(1 for entry in report.servitutter if entry.relevant_for_project)
-    non_relevant_count = max(0, len(report.servitutter) - relevant_count)
+    relevant_count = sum(1 for entry in report.servitutter if (entry.scope or "") == "Ja")
+    maybe_count = sum(1 for entry in report.servitutter if (entry.scope or "Måske") == "Måske")
+    non_relevant_count = sum(1 for entry in report.servitutter if (entry.scope or "") == "Nej")
 
     note_block = ""
     if report.notes:
@@ -129,9 +164,9 @@ def _build_html_report(report, case) -> str:
 
     rows = []
     for entry in report.servitutter:
-        relevant = "Ja" if entry.relevant_for_project else "Nej"
-        relevant_class = "relevant-row" if entry.relevant_for_project else ""
-        relevant_badge_class = "badge badge-relevant" if entry.relevant_for_project else "badge"
+        scope = entry.scope or ("Ja" if entry.relevant_for_project else "Måske")
+        relevant_class = {"Ja": "relevant-row", "Måske": "maybe-row", "Nej": ""}.get(scope, "")
+        relevant_badge_class = {"Ja": "badge badge-relevant", "Måske": "badge badge-maybe", "Nej": "badge"}.get(scope, "badge")
         rows.append(
             f"""
             <tr class="{relevant_class}">
@@ -142,7 +177,7 @@ def _build_html_report(report, case) -> str:
               <td>{html.escape(entry.disposition or "—")}</td>
               <td>{html.escape(entry.legal_type or "—")}</td>
               <td>{html.escape(entry.action or "—")}</td>
-              <td><span class="{relevant_badge_class}">{relevant}</span></td>
+              <td><span class="{relevant_badge_class}">{scope}</span></td>
             </tr>
             """
         )
@@ -544,12 +579,15 @@ def _build_html_report(report, case) -> str:
 
 for report in reports:
     with st.expander(f"Rapport `{report.report_id}` — {report.created_at}"):
-        relevant_count = sum(1 for entry in report.servitutter if entry.relevant_for_project)
+        ja = sum(1 for e in report.servitutter if (e.scope or "") == "Ja")
+        mske = sum(1 for e in report.servitutter if (e.scope or "Måske") == "Måske")
+        nej = sum(1 for e in report.servitutter if (e.scope or "") == "Nej")
         render_stat_cards(
             [
                 ("Poster", str(len(report.servitutter)), "Samlet antal rapportlinjer"),
-                ("Projektrelevante", str(relevant_count), "Markeret som direkte relevante"),
-                ("Øvrige", str(max(0, len(report.servitutter) - relevant_count)), "Kræver evt. sekundær vurdering"),
+                ("Ja", str(ja), "Gælder målmatriklen"),
+                ("Måske", str(mske), "Uafklaret scope"),
+                ("Nej", str(nej), "Gælder ikke målmatriklen"),
             ]
         )
         if report.target_matrikel:
