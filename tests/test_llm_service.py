@@ -24,7 +24,7 @@ def test_generate_text_uses_anthropic_provider(monkeypatch):
     with patch("app.services.llm_service._generate_with_anthropic", return_value="hej") as mock_fn:
         assert llm_service.generate_text("prompt", max_tokens=123) == "hej"
 
-    mock_fn.assert_called_once_with("prompt", 123)
+    mock_fn.assert_called_once_with("prompt", 123, model=None)
 
 
 def test_generate_text_uses_deepseek_provider(monkeypatch):
@@ -33,7 +33,16 @@ def test_generate_text_uses_deepseek_provider(monkeypatch):
     with patch("app.services.llm_service._generate_with_deepseek", return_value="svar") as mock_fn:
         assert llm_service.generate_text("prompt", max_tokens=321) == "svar"
 
-    mock_fn.assert_called_once_with("prompt", 321)
+    mock_fn.assert_called_once_with("prompt", 321, model=None)
+
+
+def test_generate_text_passes_model_override(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+
+    with patch("app.services.llm_service._generate_with_deepseek", return_value="svar") as mock_fn:
+        assert llm_service.generate_text("prompt", max_tokens=321, model="deepseek-reasoner") == "svar"
+
+    mock_fn.assert_called_once_with("prompt", 321, model="deepseek-reasoner")
 
 
 def test_generate_text_rejects_unknown_provider(monkeypatch):
@@ -65,6 +74,33 @@ def test_generate_with_deepseek_parses_chat_completion_response():
     request_obj = mock_urlopen.call_args.args[0]
     assert request_obj.full_url == "https://api.deepseek.com/chat/completions"
     assert request_obj.get_header("Authorization") == "Bearer sk-deepseek-test"
+
+
+def test_generate_with_deepseek_uses_model_override():
+    response_body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "DeepSeek svar",
+                    }
+                }
+            ]
+        }
+    ).encode("utf-8")
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = response_body
+    mock_response.__exit__.return_value = None
+
+    with patch("app.services.llm_service.request.urlopen", return_value=mock_response) as mock_urlopen:
+        assert (
+            llm_service._generate_with_deepseek("hej", max_tokens=42, model="deepseek-reasoner")
+            == "DeepSeek svar"
+        )
+
+    request_obj = mock_urlopen.call_args.args[0]
+    payload = json.loads(request_obj.data.decode("utf-8"))
+    assert payload["model"] == "deepseek-reasoner"
 
 
 def test_generate_with_anthropic_extracts_text():

@@ -28,6 +28,14 @@ def _build_evidence_text(servitutter: List[Servitut], all_chunks: List[Chunk]) -
     return "\n\n".join(parts)
 
 
+def _resolve_report_model() -> str | None:
+    if settings.REPORT_MODEL.strip():
+        return settings.REPORT_MODEL.strip()
+    if settings.LLM_PROVIDER.strip().lower() == "deepseek":
+        return "deepseek-reasoner"
+    return None
+
+
 def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
@@ -53,7 +61,11 @@ def generate_report(
     notes: Optional[str] = None
 
     try:
-        response_text = generate_text(prompt, max_tokens=8192).strip()
+        response_text = generate_text(
+            prompt,
+            max_tokens=8192,
+            model=_resolve_report_model(),
+        ).strip()
 
         # Parse JSON response
         start = response_text.find("{")

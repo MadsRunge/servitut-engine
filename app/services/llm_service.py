@@ -33,9 +33,15 @@ def _extract_anthropic_text(message: Any) -> str:
     return "\n".join(parts).strip()
 
 
-def _generate_with_anthropic(prompt: str, max_tokens: int) -> str:
+def _resolve_model(model: str | None) -> str:
+    if model and model.strip():
+        return model.strip()
+    return settings.MODEL
+
+
+def _generate_with_anthropic(prompt: str, max_tokens: int, model: str | None = None) -> str:
     message = _get_anthropic_client().messages.create(
-        model=settings.MODEL,
+        model=_resolve_model(model),
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -54,11 +60,11 @@ def _normalize_openai_content(content: Any) -> str:
     return ""
 
 
-def _generate_with_deepseek(prompt: str, max_tokens: int) -> str:
+def _generate_with_deepseek(prompt: str, max_tokens: int, model: str | None = None) -> str:
     api_key = _require_value("DEEPSEEK_API_KEY", settings.DEEPSEEK_API_KEY)
     url = settings.DEEPSEEK_BASE_URL.rstrip("/") + "/chat/completions"
     payload = {
-        "model": settings.MODEL,
+        "model": _resolve_model(model),
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
     }
@@ -92,10 +98,10 @@ def _generate_with_deepseek(prompt: str, max_tokens: int) -> str:
     return text
 
 
-def generate_text(prompt: str, max_tokens: int) -> str:
+def generate_text(prompt: str, max_tokens: int, model: str | None = None) -> str:
     provider = settings.LLM_PROVIDER.strip().lower()
     if provider == "anthropic":
-        return _generate_with_anthropic(prompt, max_tokens)
+        return _generate_with_anthropic(prompt, max_tokens, model=model)
     if provider == "deepseek":
-        return _generate_with_deepseek(prompt, max_tokens)
+        return _generate_with_deepseek(prompt, max_tokens, model=model)
     raise RuntimeError(f"Ukendt LLM_PROVIDER: {settings.LLM_PROVIDER}")

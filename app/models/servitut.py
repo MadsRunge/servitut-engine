@@ -15,6 +15,7 @@ class Servitut(BaseModel):
     source_document: str
     priority: int = 0
     date_reference: Optional[str] = None
+    akt_nr: Optional[str] = None
     title: Optional[str] = None
     summary: Optional[str] = None
     beneficiary: Optional[str] = None

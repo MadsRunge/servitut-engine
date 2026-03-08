@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Evidence, Servitut
@@ -95,6 +96,32 @@ def test_report_with_mock_api_response():
     assert report.servitutter[0].description == "En testservitut om vejret."
     assert report.notes == "Alt ser ud til at være i orden."
     assert report.markdown_content is not None
+
+
+def test_report_uses_deepseek_reasoner_by_default(monkeypatch):
+    servitutter = [make_mock_servitut(1)]
+    chunks = make_mock_chunks()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "REPORT_MODEL", "")
+
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
+        generate_report(servitutter, chunks, "case-test")
+
+    _, kwargs = mock_generate_text.call_args
+    assert kwargs["model"] == "deepseek-reasoner"
+
+
+def test_report_uses_explicit_report_model_override(monkeypatch):
+    servitutter = [make_mock_servitut(1)]
+    chunks = make_mock_chunks()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "REPORT_MODEL", "deepseek-chat")
+
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
+        generate_report(servitutter, chunks, "case-test")
+
+    _, kwargs = mock_generate_text.call_args
+    assert kwargs["model"] == "deepseek-chat"
 
 
 def test_report_entry_model():

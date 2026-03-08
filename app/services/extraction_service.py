@@ -6,14 +6,10 @@ from app.models.servitut import Servitut
 from app.services.extraction import (
     ProgressCallback,
     _dedup_akt_servitutter,
-    _extract_date_components,
     _extract_document_servitutter,
     _extract_from_doc_chunks,
-    _load_prompt,
-    _merge_servitutter,
-    _parse_llm_response,
     _prescreeen_chunks,
-    _servitut_matches,
+    enrich_canonical_list,
 )
 from app.services import storage_service
 
@@ -84,22 +80,15 @@ def extract_servitutter(
     if not akt_chunks:
         return canonical_list
 
-    # --- Pas 2: Akter ---
-    logger.info(f"Pas 2: Udtræk fra akter ({len(akt_chunks)} chunks)")
-    relevant_akt = _prescreeen_chunks(akt_chunks)
-    if relevant_akt:
-        akt_by_doc: dict[str, list[Chunk]] = {}
-        for c in relevant_akt:
-            akt_by_doc.setdefault(c.document_id, []).append(c)
-        akt_list = _extract_from_doc_chunks(
-            akt_by_doc,
-            case_id,
-            "akt",
-            progress_callback=progress_callback,
-        )
-        logger.info(f"Akt-udtræk: {len(akt_list)} servitutter")
-    else:
-        akt_list = []
+    # --- Pas 2: Canonical-driven berigelse fra akter ---
+    logger.info(f"Pas 2: Canonical-driven berigelse fra akter ({len(akt_chunks)} chunks)")
+    akt_by_doc: dict[str, list[Chunk]] = {}
+    for c in akt_chunks:
+        akt_by_doc.setdefault(c.document_id, []).append(c)
 
-    # --- Merge ---
-    return _merge_servitutter(canonical_list, akt_list)
+    return enrich_canonical_list(
+        canonical_list,
+        akt_by_doc,
+        case_id,
+        progress_callback=progress_callback,
+    )
