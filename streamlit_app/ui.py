@@ -415,8 +415,8 @@ def select_document(case_id: str, docs, label: str = "Dokument", key: str = "act
 def compute_case_stats(case_id: str) -> CaseStats:
     case = storage_service.load_case(case_id)
     docs = storage_service.list_documents(case_id)
-    pages = sum(len(storage_service.load_ocr_pages(case_id, doc.document_id)) for doc in docs)
-    chunks = sum(len(storage_service.load_chunks(case_id, doc.document_id)) for doc in docs)
+    pages = sum(doc.page_count for doc in docs)
+    chunks = sum(doc.chunk_count for doc in docs)
     ocr_ready = sum(1 for doc in docs if doc.parse_status == "ocr_done")
     servitutter = len(storage_service.list_servitutter(case_id))
     reports = len(storage_service.list_reports(case_id))
@@ -493,6 +493,7 @@ def render_case_stats(case_id: str) -> CaseStats:
 def parse_status_label(status: str) -> str:
     return {
         "pending": "Afventer OCR",
+        "processing": "Kører OCR",
         "ocr_done": "OCR færdig",
         "error": "Fejl",
     }.get(status, status)

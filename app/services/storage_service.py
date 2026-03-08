@@ -79,13 +79,14 @@ def save_document(doc: Document) -> None:
     logger.debug(f"Saved document {doc.document_id}")
 
 
-def load_document(case_id: str, doc_id: str) -> Optional[Document]:
+def load_document(case_id: str, doc_id: str, include_pages: bool = True) -> Optional[Document]:
     meta_path = _doc_dir(case_id, doc_id) / "metadata.json"
     if not json_exists(meta_path):
         return None
     data = load_json(meta_path)
-    ocr_path = get_ocr_path(case_id, doc_id)
-    data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
+    if include_pages:
+        ocr_path = get_ocr_path(case_id, doc_id)
+        data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
     return Document(**data)
 
 
@@ -104,7 +105,7 @@ def load_ocr_pages(case_id: str, doc_id: str) -> list:
     return [PageData(**p) for p in load_json(path)]
 
 
-def list_documents(case_id: str) -> List[Document]:
+def list_documents(case_id: str, include_pages: bool = False) -> List[Document]:
     docs_dir = _case_dir(case_id) / "documents"
     if not docs_dir.exists():
         return []
@@ -114,9 +115,10 @@ def list_documents(case_id: str) -> List[Document]:
         if json_exists(meta_path):
             try:
                 data = load_json(meta_path)
-                doc_id = data.get("document_id", doc_dir.name)
-                ocr_path = get_ocr_path(case_id, doc_id)
-                data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
+                if include_pages:
+                    doc_id = data.get("document_id", doc_dir.name)
+                    ocr_path = get_ocr_path(case_id, doc_id)
+                    data["pages"] = load_json(ocr_path) if json_exists(ocr_path) else []
                 docs.append(Document(**data))
             except Exception as e:
                 logger.warning(f"Could not load document from {doc_dir}: {e}")

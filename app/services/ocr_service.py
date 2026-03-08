@@ -30,6 +30,14 @@ def _estimate_confidence(text: str) -> float:
     return round(min(1.0, max(0.0, (ratio - 0.10) / 0.40)), 3)
 
 
+def summarize_pages(pages: List[PageData]) -> tuple[int, int, int]:
+    """Returnér (blanke, lave, ok) sideantal til let UI/statusbrug."""
+    blank = sum(1 for page in pages if page.confidence == 0.0)
+    low = sum(1 for page in pages if 0.0 < page.confidence < 0.4)
+    ok = len(pages) - blank - low
+    return blank, low, ok
+
+
 def run_ocrmypdf(pdf_path: Path, ocr_pdf_path: Path) -> None:
     """
     Kør ocrmypdf på original PDF og gem OCR-resultatet som ocr.pdf.
@@ -98,8 +106,7 @@ def process_document(pdf_path: Path, doc_id: str, case_id: str, ocr_pdf_path: Pa
     run_ocrmypdf(pdf_path, ocr_pdf_path)
     pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
 
-    blank = sum(1 for p in pages if p.confidence == 0.0)
-    low = sum(1 for p in pages if 0.0 < p.confidence < 0.4)
+    blank, low, _ = summarize_pages(pages)
     logger.info(
         f"OCR færdig: {len(pages)} sider | {blank} blanke | {low} lav-conf | doc={doc_id}"
     )

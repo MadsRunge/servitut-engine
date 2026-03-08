@@ -10,7 +10,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.models.document import PageData
-from app.services.ocr_service import _estimate_confidence, extract_pages_from_ocr_pdf, process_document
+from app.services.ocr_service import (
+    _estimate_confidence,
+    extract_pages_from_ocr_pdf,
+    process_document,
+    summarize_pages,
+)
 
 
 # --- _estimate_confidence ---
@@ -118,6 +123,18 @@ def test_process_document_handles_prior_ocr(tmp_path):
 
     assert ocr_pdf_path.exists()
     assert len(pages) == 1
+
+
+def test_summarize_pages_counts_blank_low_and_ok():
+    pages = [
+        PageData(page_number=1, text="Læsbar tekst", confidence=0.9),
+        PageData(page_number=2, text="Lidt støj", confidence=0.2),
+        PageData(page_number=3, text="", confidence=0.0),
+    ]
+
+    blank, low, ok = summarize_pages(pages)
+
+    assert (blank, low, ok) == (1, 1, 1)
 
 
 # --- Regressions: ingen vision-referencer i OCR-service ---

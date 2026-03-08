@@ -7,7 +7,7 @@ from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.services import case_service, storage_service
 from app.services.chunking_service import chunk_pages
-from app.services.ocr_service import process_document
+from app.services.ocr_service import process_document, summarize_pages
 
 router = APIRouter()
 
@@ -32,12 +32,17 @@ def run_ocr(case_id: str, doc_id: str):
         pages = process_document(pdf_path, doc_id, case_id, ocr_pdf_path)
         storage_service.save_ocr_pages(case_id, doc_id, pages)
 
+        blank, low, _ = summarize_pages(pages)
+        chunks = chunk_pages(pages, doc_id, case_id)
+
         doc.pages = pages
         doc.page_count = len(pages)
+        doc.chunk_count = len(chunks)
+        doc.ocr_blank_pages = blank
+        doc.ocr_low_conf_pages = low
         doc.parse_status = "ocr_done"
         storage_service.save_document(doc)
 
-        chunks = chunk_pages(pages, doc_id, case_id)
         storage_service.save_chunks(case_id, doc_id, chunks)
     except Exception as e:
         doc.parse_status = "error"

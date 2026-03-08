@@ -18,5 +18,8 @@ class Document(BaseModel):
     document_type: str = "unknown"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     page_count: int = 0
+    chunk_count: int = 0
+    ocr_blank_pages: int = 0
+    ocr_low_conf_pages: int = 0
     pages: List[PageData] = Field(default_factory=list)
-    parse_status: str = "pending"  # pending | ocr_done | error
+    parse_status: str = "pending"  # pending | processing | ocr_done | error
