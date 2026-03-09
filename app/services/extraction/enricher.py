@@ -214,6 +214,8 @@ def enrich_canonical_list(
     }
     # key (canonical date_reference) → (best item dict, doc_id, chunk_list)
     best_by_key: dict[str, tuple[dict, str, List[Chunk]]] = {}
+    # orphan_key → (item, doc_id, chunk_list) — fundet i akt men ikke i attest
+    orphan_best: dict[str, tuple[dict, str, List[Chunk]]] = {}
 
     for doc_id, chunk_list in akt_chunks_by_doc.items():
         _emit_progress(
@@ -236,9 +238,17 @@ def enrich_canonical_list(
         for item in items:
             key = _resolve_canonical_key(item, canonical_by_date, canonical_by_akt)
             if key is None:
+                # Ikke i tinglysningsattest — gem som ubekræftet
+                orphan_key = _normalize_akt_nr(item.get("akt_nr") or "") or (item.get("date_reference") or "")
+                if orphan_key and orphan_key not in orphan_best:
+                    orphan_best[orphan_key] = (item, doc_id, chunk_list)
+                elif orphan_key:
+                    existing_conf = float(orphan_best[orphan_key][0].get("confidence", 0))
+                    if float(item.get("confidence", 0.5) or 0.5) > existing_conf:
+                        orphan_best[orphan_key] = (item, doc_id, chunk_list)
                 logger.debug(
-                    f"Enrichment item not matched to any canonical "
-                    f"(date={item.get('date_reference')!r}, akt_nr={item.get('akt_nr')!r})"
+                    f"Umatched enrichment item (not in attest): "
+                    f"date={item.get('date_reference')!r}, akt_nr={item.get('akt_nr')!r}"
                 )
                 continue
             item_conf = float(item.get("confidence", 0.5) or 0.5)
@@ -283,5 +293,40 @@ def enrich_canonical_list(
         else:
             result.append(canonical)
 
-    logger.info(f"Enrichment færdig: {matched}/{len(canonical_list)} servitutter beriget fra akter")
+    # Tilføj ubekræftede servitutter (fundet i akt, ikke i attest)
+    unconfirmed_count = 0
+    for orphan_key, (item, doc_id, chunk_list) in orphan_best.items():
+        enriched_date = item.get("date_reference")
+        enriched_akt_nr = item.get("akt_nr")
+        srv = Servitut(
+            servitut_id=generate_servitut_id(),
+            case_id=case_id,
+            source_document=doc_id,
+            date_reference=enriched_date,
+            akt_nr=enriched_akt_nr,
+            title=item.get("title"),
+            summary=item.get("summary"),
+            beneficiary=item.get("beneficiary"),
+            disposition_type=item.get("disposition_type"),
+            legal_type=item.get("legal_type"),
+            construction_relevance=bool(item.get("construction_relevance", False)),
+            byggeri_markering=item.get("byggeri_markering"),
+            action_note=item.get("action_note"),
+            applies_to_matrikler=_coerce_str_list(item.get("applies_to_matrikler")),
+            scope_basis=item.get("scope_basis"),
+            scope_confidence=item.get("scope_confidence"),
+            confidence=float(item.get("confidence", 0.5) or 0.5),
+            evidence=_make_akt_evidence(chunk_list, enriched_date, enriched_akt_nr),
+            attest_confirmed=False,
+        )
+        result.append(srv)
+        unconfirmed_count += 1
+        logger.info(
+            f"Ubekræftet servitut tilføjet (ikke i attest): {srv.title} ({srv.date_reference})"
+        )
+
+    logger.info(
+        f"Enrichment færdig: {matched}/{len(canonical_list)} beriget, "
+        f"{unconfirmed_count} ubekræftede fra akter"
+    )
     return result

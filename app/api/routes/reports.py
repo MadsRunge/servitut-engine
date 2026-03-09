@@ -22,11 +22,12 @@ def create_report(case_id: str):
     all_chunks = storage_service.load_all_chunks(case_id)
 
     try:
+        target = [case.target_matrikel] if case.target_matrikel else []
         report = generate_report(
             servitutter,
             all_chunks,
             case_id,
-            target_matrikel=case.target_matrikel,
+            target_matrikler=target,
             available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
         )
     except Exception as e:

@@ -32,3 +32,4 @@ class Servitut(BaseModel):
     confidence: float = 0.0
     evidence: List[Evidence] = Field(default_factory=list)
     flags: List[str] = Field(default_factory=list)
+    attest_confirmed: bool = True  # False = fundet i akt men ikke i tinglysningsattest

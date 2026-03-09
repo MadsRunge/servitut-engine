@@ -180,6 +180,13 @@ def _extract_document_servitutter(
         )
         return []
 
+    def _coerce_str_list(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [str(v).strip().lower() for v in value if str(v).strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip().lower()]
+        return []
+
     servitutter: List[Servitut] = []
     for i, item in enumerate(extracted):
         servitut = Servitut(
@@ -188,6 +195,7 @@ def _extract_document_servitutter(
             source_document=doc_id,
             priority=i,
             date_reference=item.get("date_reference"),
+            akt_nr=item.get("akt_nr"),
             title=item.get("title"),
             summary=item.get("summary"),
             beneficiary=item.get("beneficiary"),
@@ -196,6 +204,7 @@ def _extract_document_servitutter(
             construction_relevance=item.get("construction_relevance", False) or False,
             byggeri_markering=item.get("byggeri_markering"),
             action_note=item.get("action_note"),
+            applies_to_matrikler=_coerce_str_list(item.get("applies_to_matrikler")),
             confidence=float(item.get("confidence", 0.5) or 0.5),
             evidence=_find_evidence_chunk(chunk_list, doc_id),
         )

@@ -4,7 +4,7 @@ Du analyserer en TINGLYSNINGSATTEST — et officielt register over alle tinglyst
 Din eneste opgave er at udtræke den autoritative liste over servitutter med løbenummer og titel.
 
 VIGTIGT:
-- Udtræk KUN date_reference, akt_nr, title og confidence
+- Udtræk KUN date_reference, akt_nr, title, applies_to_matrikler og confidence
 - Løbenummeret (fx "09.02.1957-490-40") er kritisk — kopiér det præcist som det står
 - akt_nr er aktens identifikator/volumenummer (fx "40 B 405", "23 M 20", "B-405") — kopiér præcist som det fremgår
 - Titlen skal være kort og præcis baseret på beskrivelsen i attesten
@@ -14,6 +14,12 @@ For hver servitut, returner et JSON-objekt med disse felter:
 - date_reference: Dato og løbenummer præcist som angivet (fx "09.02.1957-490-40"). Brug null hvis ukendt.
 - akt_nr: Aktens identifikator/nummer præcist som angivet (fx "40 B 405", "40B405"). Brug null hvis ikke angivet.
 - title: Kort, præcis titel (fx "Vejbyggelinje fra Billeshavevej", "Afløbsledning", "Vandstandsregulering").
+- applies_to_matrikler: Liste over matrikelnumre fra attesten som servitutten gælder for.
+    I attesten vises dette typisk som "Vedr 38B", "Vedr 1M", "Vedr 1A" i tillægsteksten.
+    Udtræk PRÆCIST det matrikelnummer der er nævnt (fx ["38b"], ["1m"], ["1a"]).
+    Returner nummeret præcist som det står i attesten — selv hvis det er et gammelt/historisk nummer der ikke matcher ejendommens nuværende matrikler. Det er bedre at bevare det originale nummer end at gætte på en nutidig ækvivalent.
+    Hvis ingen "Vedr"-annotation findes for denne servitut, returner en tom liste [].
+    Normaliser til lowercase (fx "38B" → "38b").
 - confidence: 1.0 for klart listede servitutter med løbenummer, lavere hvis usikker.
 
 Returner KUN et JSON-array med servitut-objekter. Ingen forklarende tekst før eller efter.

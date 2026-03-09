@@ -89,33 +89,56 @@ def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
 
 def resolve_target_matrikel_scope(
     applies_to_matrikler: List[str],
-    target_matrikel: Optional[str],
+    target_matrikler: List[str],
+    available_matrikler: Optional[List[str]] = None,
 ) -> Optional[bool]:
-    if not target_matrikel:
+    """
+    Return True if ANY target matrikel is in applies_to_matrikler.
+    Return None (Måske) if applies_to_matrikler contains only unrecognized numbers
+    (likely historical/old matrikel numbers that don't appear in available_matrikler).
+    Return False only if the matrikler are known but definitively not in target.
+    """
+    if not target_matrikler:
         return None
+    normalized_targets = {m.strip().lower() for m in target_matrikler if m.strip()}
+    normalized_applies = {m.strip().lower() for m in applies_to_matrikler if m.strip()}
+    if not normalized_applies:
+        return None
+    if normalized_targets & normalized_applies:
+        return True
+    # If none of applies_to_matrikler appear in available_matrikler either,
+    # they are likely old/historical numbers — return None (Måske) instead of False.
+    if available_matrikler:
+        normalized_available = {m.strip().lower() for m in available_matrikler if m.strip()}
+        if not normalized_applies & normalized_available:
+            return None
+    return False
 
-    normalized_target = target_matrikel.strip().lower()
-    normalized_matrikler = [value.strip().lower() for value in applies_to_matrikler if value.strip()]
-    if not normalized_matrikler:
-        return None
-    return normalized_target in normalized_matrikler
+
+def resolve_matching_target_matrikler(
+    applies_to_matrikler: List[str],
+    target_matrikler: List[str],
+) -> List[str]:
+    """Return which of the target matrikler the servitut explicitly applies to."""
+    normalized_applies = {m.strip().lower() for m in applies_to_matrikler if m.strip()}
+    return [m for m in target_matrikler if m.strip().lower() in normalized_applies]
 
 
 def filter_servitutter_for_target(
     servitutter: List[Servitut],
-    target_matrikel: Optional[str],
+    target_matrikler: List[str],
+    available_matrikler: Optional[List[str]] = None,
 ) -> List[Servitut]:
     """
-    Annotate all servitutter with applies_to_target_matrikel computed dynamically
-    from applies_to_matrikler.  Returns ALL servitutter (Ja + Nej + Måske) so the
-    report can show the full picture — matching a real redegørelse.
+    Annotate all servitutter with applies_to_target_matrikel computed dynamically.
+    Returns ALL servitutter (Ja + Nej + Måske) — matching a real redegørelse.
     """
-    if not target_matrikel:
+    if not target_matrikler:
         return servitutter
     return [
         srv.model_copy(update={
             "applies_to_target_matrikel": resolve_target_matrikel_scope(
-                srv.applies_to_matrikler, target_matrikel
+                srv.applies_to_matrikler, target_matrikler, available_matrikler
             )
         })
         for srv in servitutter

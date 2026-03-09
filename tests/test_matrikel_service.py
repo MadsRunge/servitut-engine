@@ -64,9 +64,17 @@ def test_sync_case_matrikler_sets_default_target(tmp_path, monkeypatch):
 
 
 def test_resolve_target_matrikel_scope_is_deterministic():
-    assert matrikel_service.resolve_target_matrikel_scope(["0005ay", "0518p"], "0005ay") is True
-    assert matrikel_service.resolve_target_matrikel_scope(["0518p"], "0005ay") is False
-    assert matrikel_service.resolve_target_matrikel_scope([], "0005ay") is None
+    assert matrikel_service.resolve_target_matrikel_scope(["0005ay", "0518p"], ["0005ay"]) is True
+    assert matrikel_service.resolve_target_matrikel_scope(["0518p"], ["0005ay"]) is False
+    assert matrikel_service.resolve_target_matrikel_scope([], ["0005ay"]) is None
+
+
+def test_resolve_target_matrikel_scope_multi_matrikel():
+    # Matches when any target matrikel is in applies_to_matrikler
+    assert matrikel_service.resolve_target_matrikel_scope(["1o"], ["1o", "1v"]) is True
+    assert matrikel_service.resolve_target_matrikel_scope(["1v"], ["1o", "1v"]) is True
+    assert matrikel_service.resolve_target_matrikel_scope(["38b"], ["1o", "1v"]) is False
+    assert matrikel_service.resolve_target_matrikel_scope([], ["1o", "1v"]) is None
 
 
 def test_list_documents_is_metadata_only_by_default(tmp_path, monkeypatch):

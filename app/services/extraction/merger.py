@@ -31,14 +31,16 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
         updates["byggeri_markering"] = akt_srv.byggeri_markering
     if akt_srv.construction_relevance:
         updates["construction_relevance"] = True
-    if akt_srv.applies_to_matrikler:
+    # Attest-scope (canonical.applies_to_matrikler) er ground truth — overskriv ikke.
+    # Brug kun akt-LLM's scope hvis attesten ikke har angivet noget.
+    if akt_srv.applies_to_matrikler and not canonical.applies_to_matrikler:
         updates["applies_to_matrikler"] = akt_srv.applies_to_matrikler
-    if akt_srv.applies_to_target_matrikel is not None:
-        updates["applies_to_target_matrikel"] = akt_srv.applies_to_target_matrikel
-    if akt_srv.scope_basis:
-        updates["scope_basis"] = akt_srv.scope_basis
-    if akt_srv.scope_confidence is not None:
-        updates["scope_confidence"] = akt_srv.scope_confidence
+        if akt_srv.applies_to_target_matrikel is not None:
+            updates["applies_to_target_matrikel"] = akt_srv.applies_to_target_matrikel
+        if akt_srv.scope_basis:
+            updates["scope_basis"] = akt_srv.scope_basis
+        if akt_srv.scope_confidence is not None:
+            updates["scope_confidence"] = akt_srv.scope_confidence
 
     return canonical.model_copy(update=updates)
 

@@ -7,7 +7,7 @@ from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Servitut
 from app.services.llm_service import generate_text
-from app.services.matrikel_service import filter_servitutter_for_target
+from app.services.matrikel_service import filter_servitutter_for_target, resolve_matching_target_matrikler
 from app.services.rag_service import find_relevant_chunks
 from app.utils.ids import generate_report_id
 
@@ -41,14 +41,15 @@ def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
     case_id: str,
-    target_matrikel: Optional[str] = None,
+    target_matrikler: Optional[List[str]] = None,
     available_matrikler: Optional[List[str]] = None,
 ) -> Report:
     """Generate a structured report from extracted servitutter."""
     report_id = generate_report_id()
     prompt_template = _load_prompt()
+    target_matrikler = target_matrikler or []
     available_matrikler = available_matrikler or []
-    filtered_servitutter = filter_servitutter_for_target(servitutter, target_matrikel)
+    filtered_servitutter = filter_servitutter_for_target(servitutter, target_matrikler, available_matrikler)
 
     servitutter_json = json.dumps(
         [s.model_dump() for s in filtered_servitutter],
@@ -60,7 +61,10 @@ def generate_report(
 
     prompt = prompt_template.replace("{servitutter_json}", servitutter_json)
     prompt = prompt.replace("{evidence_text}", evidence_text)
-    prompt = prompt.replace("{target_matrikel}", target_matrikel or "ikke valgt")
+    prompt = prompt.replace(
+        "{target_matrikler_json}",
+        json.dumps(target_matrikler, ensure_ascii=False),
+    )
     prompt = prompt.replace(
         "{all_matrikler_json}",
         json.dumps(available_matrikler, ensure_ascii=False),
@@ -77,12 +81,18 @@ def generate_report(
             model=_resolve_report_model(),
         ).strip()
 
-        # Parse JSON response
-        start = response_text.find("{")
-        end = response_text.rfind("}") + 1
+        # Extract markdown table from delimited section (outside JSON to avoid escaping issues)
+        md_start = response_text.find("--- MARKDOWN TABEL START ---")
+        md_end = response_text.find("--- MARKDOWN TABEL SLUT ---")
+        if md_start != -1 and md_end != -1:
+            markdown_content = response_text[md_start + len("--- MARKDOWN TABEL START ---"):md_end].strip()
+
+        # Parse JSON response — only the JSON object, before the markdown section
+        json_text = response_text[:md_start] if md_start != -1 else response_text
+        start = json_text.find("{")
+        end = json_text.rfind("}") + 1
         if start != -1 and end > start:
-            data = json.loads(response_text[start:end])
-            markdown_content = data.get("markdown_table")
+            data = json.loads(json_text[start:end])
             notes = data.get("notes")
             for i, entry_data in enumerate(data.get("entries", []), 1):
                 scope_val = entry_data.get("scope")
@@ -97,6 +107,7 @@ def generate_report(
                         action=entry_data.get("action"),
                         relevant_for_project=scope_val == "Ja",
                         scope=scope_val,
+                        scope_detail=entry_data.get("scope_detail"),
                         servitut_id=entry_data.get("servitut_id", ""),
                     )
                 )
@@ -109,6 +120,8 @@ def generate_report(
                 else "Nej" if srv.applies_to_target_matrikel is False
                 else "Måske"
             )
+            matching = resolve_matching_target_matrikler(srv.applies_to_matrikler, target_matrikler)
+            scope_detail = f"Vedr. matr.nr. {' og '.join(matching)}" if matching else None
             entries.append(
                 ReportEntry(
                     nr=i,
@@ -120,6 +133,7 @@ def generate_report(
                     action=srv.action_note,
                     relevant_for_project=srv.applies_to_target_matrikel is True,
                     scope=scope,
+                    scope_detail=scope_detail,
                     servitut_id=srv.servitut_id,
                 )
             )
@@ -127,7 +141,7 @@ def generate_report(
     report = Report(
         report_id=report_id,
         case_id=case_id,
-        target_matrikel=target_matrikel,
+        target_matrikler=target_matrikler,
         available_matrikler=available_matrikler,
         servitutter=entries,
         notes=notes,

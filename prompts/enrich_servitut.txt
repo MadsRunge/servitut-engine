@@ -22,14 +22,15 @@ For HVER servitut du genkender i akten, returner et JSON-objekt med disse felter
     "orange" — Der skal tages stilling til servitutten (fx mulig aflysning, uafklaret omfang, ledninger der kan flyttes)
     "sort"   — Servitutten vedrører ikke projektområdet eller har ingen byggerelevans
 - action_note: Anbefalet handling (fx "Kontakt Vejdirektoratet for evt. aflysning", "Ingen handling nødvendig").
-- applies_to_matrikler: Liste over matrikelnumre fra ejendommens matrikler, som servitutten gælder for.
+- applies_to_matrikler: Liste over matrikelnumre fra ejendommens NUVÆRENDE matrikler, som servitutten gælder for.
     REGLER FOR SCOPE-VURDERING:
     * Brug KUN matrikelnumre der er eksplicit nævnt i aktteksten (fx "matr.nr. 5ay", "parcellen 5a", rids-beskrivelse).
-    * Hvis akten beskriver en ledning, vej eller byggelinje med et geometrisk forløb — inkludér kun de matrikler der er nævnt i beskrivelsenafgræns.
+    * Inkludér KUN numre der fremgår af listen over ejendommens matrikler ovenfor.
+    * Hvis akten beskriver en ledning, vej eller byggelinje med et geometrisk forløb — inkludér kun de matrikler der er nævnt i beskrivelsen.
     * Hvis akten gælder alle matrikler i ejendommen eksplicit — inkludér alle fra listen.
-    * Hvis du er usikker, eller aktteksten ikke nævner specifikke matrikler — returner en tom liste [].
     * Gæt ALDRIG på scope. Hellere [] end et forkert matrikelnummer.
-- scope_basis: Citat eller kort beskrivelse fra aktteksten der begrunder din scope-vurdering (fx "Akten nævner 'matr. 5ay Aalborg Markjorder'" eller "Ingen specifik matrikel nævnt i aktteksten").
+    * VIGTIGT — historiske akter bruger ofte GAMLE matrikelnumre: Hvis aktteksten nævner et matrikelnummer der IKKE findes på ejendommens nuværende matrikelliste, er det sandsynligvis et gammelt/historisk nummer for en matrikel der siden er omregistreret eller udstykket. I så fald: returner [] og noter det gamle nummer i scope_basis.
+- scope_basis: Citat eller kort beskrivelse fra aktteksten der begrunder din scope-vurdering (fx "Akten nævner 'matr. 5ay Aalborg Markjorder'" eller "Akten nævner 'matr. 1a' — ikke på nuværende matrikelliste, sandsynligvis gammelt nummer" eller "Ingen specifik matrikel nævnt i aktteksten").
 - scope_confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på scope-vurderingen.
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket.
 

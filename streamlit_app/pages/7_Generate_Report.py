@@ -33,8 +33,8 @@ render_case_stats(case.case_id)
 
 # --- Matrikelvalg ---
 render_section(
-    "Vælg matrikel",
-    "Redegørelsen udarbejdes for én matrikel ad gangen. Vælg hvilken matrikel rapporten skal gælde for.",
+    "Vælg projektmatrikler",
+    "Vælg én eller flere matrikler som udgør projektområdet. Redegørelsen vurderer alle servitutter mod de valgte matrikler.",
 )
 
 if not case.matrikler:
@@ -46,26 +46,33 @@ matrikel_labels = {
     + (f" · {m.areal_m2} m²" if m.areal_m2 else ""): m.matrikelnummer
     for m in case.matrikler
 }
-current = case.target_matrikel or case.matrikler[0].matrikelnummer
-options = list(matrikel_labels.keys())
-idx = next((i for i, lbl in enumerate(options) if matrikel_labels[lbl] == current), 0)
+all_options = list(matrikel_labels.keys())
 
-selected_label = st.radio(
-    "Målmatrikel for denne redegørelse",
-    options,
-    index=idx,
-    horizontal=len(options) <= 4,
+# Default: pre-select current target_matrikel if set, otherwise first
+default_labels = (
+    [lbl for lbl, nr in matrikel_labels.items() if nr == case.target_matrikel]
+    if case.target_matrikel
+    else [all_options[0]]
 )
-selected_matrikel = matrikel_labels[selected_label]
 
-if selected_matrikel != case.target_matrikel:
-    case = matrikel_service.update_target_matrikel(case.case_id, selected_matrikel) or case
+selected_labels = st.multiselect(
+    "Projektmatrikler for denne redegørelse",
+    options=all_options,
+    default=default_labels,
+    help="Vælg alle matrikler der indgår i projektområdet. Servitutter vurderes samlet mod disse.",
+)
+selected_matrikler = [matrikel_labels[lbl] for lbl in selected_labels]
+
+if not selected_matrikler:
+    st.warning("Vælg mindst én matrikel for at fortsætte.", icon="⚠️")
+    st.stop()
 
 st.divider()
 
 servitutter = matrikel_service.filter_servitutter_for_target(
     storage_service.list_servitutter(case.case_id),
-    selected_matrikel,
+    selected_matrikler,
+    available_matrikler=[m.matrikelnummer for m in case.matrikler],
 )
 
 ja = sum(1 for s in servitutter if s.applies_to_target_matrikel is True)
@@ -73,7 +80,7 @@ mske = sum(1 for s in servitutter if s.applies_to_target_matrikel is None)
 nej = sum(1 for s in servitutter if s.applies_to_target_matrikel is False)
 
 st.info(
-    f"**{len(servitutter)} servitutter** for **{selected_matrikel}** — "
+    f"**{len(servitutter)} servitutter** for **{', '.join(selected_matrikler)}** — "
     f"**{ja} Ja** · **{mske} Måske** · **{nej} Nej**",
     icon="📋",
 )
@@ -93,7 +100,7 @@ if st.button("Generer redegørelse", type="primary"):
                     servitutter,
                     all_chunks,
                     case.case_id,
-                    target_matrikel=selected_matrikel,
+                    target_matrikler=selected_matrikler,
                     available_matrikler=[m.matrikelnummer for m in case.matrikler],
                 )
                 storage_service.save_report(report)
@@ -110,10 +117,10 @@ if not reports:
 
 def _build_markdown_report(report) -> str:
     parts = [f"# Rapport {report.report_id}", ""]
-    if report.target_matrikel:
+    if report.target_matrikler:
         parts.extend(
             [
-                f"**Målmatrikel:** {report.target_matrikel}",
+                f"**Projektmatrikler:** {', '.join(report.target_matrikler)}",
                 f"**Ejendommens matrikler:** {', '.join(report.available_matrikler) or 'Ikke angivet'}",
                 "",
             ]
@@ -147,7 +154,7 @@ def _build_html_report(report, case) -> str:
     case_name = case.name
     address = case.address or "Ikke angivet"
     external_ref = case.external_ref or "Ikke angivet"
-    target_matrikel = report.target_matrikel or "Ikke valgt"
+    target_matrikel = ", ".join(report.target_matrikler) if report.target_matrikler else "Ikke valgt"
     all_matrikler = ", ".join(report.available_matrikler) or "Ikke angivet"
     relevant_count = sum(1 for entry in report.servitutter if (entry.scope or "") == "Ja")
     maybe_count = sum(1 for entry in report.servitutter if (entry.scope or "Måske") == "Måske")
@@ -165,6 +172,7 @@ def _build_html_report(report, case) -> str:
     rows = []
     for entry in report.servitutter:
         scope = entry.scope or ("Ja" if entry.relevant_for_project else "Måske")
+        scope_text = entry.scope_detail or scope
         relevant_class = {"Ja": "relevant-row", "Måske": "maybe-row", "Nej": ""}.get(scope, "")
         relevant_badge_class = {"Ja": "badge badge-relevant", "Måske": "badge badge-maybe", "Nej": "badge"}.get(scope, "badge")
         rows.append(
@@ -177,7 +185,7 @@ def _build_html_report(report, case) -> str:
               <td>{html.escape(entry.disposition or "—")}</td>
               <td>{html.escape(entry.legal_type or "—")}</td>
               <td>{html.escape(entry.action or "—")}</td>
-              <td><span class="{relevant_badge_class}">{scope}</span></td>
+              <td><span class="{relevant_badge_class}">{html.escape(scope_text)}</span></td>
             </tr>
             """
         )
@@ -590,9 +598,9 @@ for report in reports:
                 ("Nej", str(nej), "Gælder ikke målmatriklen"),
             ]
         )
-        if report.target_matrikel:
+        if report.target_matrikler:
             st.caption(
-                f"Målmatrikel: {report.target_matrikel} · "
+                f"Projektmatrikler: {', '.join(report.target_matrikler)} · "
                 f"Ejendommens matrikler: {', '.join(report.available_matrikler) or '—'}"
             )
         if report.notes:

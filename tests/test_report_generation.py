@@ -63,9 +63,14 @@ MOCK_API_RESPONSE = """{
       "servitut_id": "srv-test0001"
     }
   ],
-  "notes": "Alt ser ud til at være i orden.",
-  "markdown_table": "| Nr. | Dato | Beskrivelse |\\n|-----|------|-------------|\\n| 1 | 01.01.2000 | En testservitut |"
-}"""
+  "notes": "Alt ser ud til at være i orden."
+}
+
+--- MARKDOWN TABEL START ---
+| Nr. | Dato | Beskrivelse |
+|-----|------|-------------|
+| 1 | 01.01.2000 | En testservitut |
+--- MARKDOWN TABEL SLUT ---"""
 
 
 def test_report_fallback_on_api_error():
@@ -81,6 +86,7 @@ def test_report_fallback_on_api_error():
     assert report.case_id == "case-test"
     assert len(report.servitutter) == 2
     assert report.servitutter[0].description == "Resumé af servitut 1"
+    assert report.target_matrikler == []
 
 
 def test_report_with_mock_api_response():
@@ -138,7 +144,7 @@ def test_report_includes_all_servitutter_with_scope_annotation():
             [included, other],
             make_mock_chunks(),
             "case-test",
-            target_matrikel="0005ay",
+            target_matrikler=["0005ay"],
             available_matrikler=["0005ay", "0518p"],
         )
 
@@ -168,6 +174,7 @@ def test_report_model_serialization():
     report = Report(
         report_id="rep-test1234",
         case_id="case-test",
+        target_matrikler=["1o", "1v"],
         servitutter=[],
         notes="En note",
         markdown_content="# Tabel\n...",
@@ -175,5 +182,7 @@ def test_report_model_serialization():
     data = report.model_dump()
     assert data["report_id"] == "rep-test1234"
     assert data["notes"] == "En note"
+    assert data["target_matrikler"] == ["1o", "1v"]
     report2 = Report(**data)
     assert report2.markdown_content == "# Tabel\n..."
+    assert report2.target_matrikler == ["1o", "1v"]

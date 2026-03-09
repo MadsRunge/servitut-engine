@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from app.core.config import settings
-from app.services import case_service, matrikel_service, storage_service
+from app.services import case_service, storage_service
 from app.services.extraction_service import extract_servitutter
 from streamlit_app.ui import (
     render_case_banner,
@@ -14,7 +14,6 @@ from streamlit_app.ui import (
     render_empty_state,
     render_section,
     select_case,
-    select_target_matrikel,
     setup_page,
 )
 
@@ -25,7 +24,6 @@ setup_page(
 )
 
 case = select_case()
-case = select_target_matrikel(case)
 render_case_banner(case)
 render_case_stats(case.case_id)
 
@@ -36,8 +34,6 @@ render_section(
     "Klar til udtræk",
     f"{len(all_chunks)} tekstuddrag på tværs af sagens dokumenter.",
 )
-if case.target_matrikel:
-    st.info(f"Aktiv matrikel: **{case.target_matrikel}**", icon="🎯")
 
 # --- Byg filnavn-opslag ---
 documents = storage_service.list_documents(case.case_id)
@@ -105,13 +101,10 @@ if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
 # --- Servitut-liste ---
 render_section(
     "Udtrukne servitutter",
-    "Gennemgå alle servitutter for den valgte matrikel inden rapportgenerering.",
+    "Gennemgå alle udtrukne servitutter for ejendommen inden rapportgenerering.",
 )
 
-servitutter = matrikel_service.filter_servitutter_for_target(
-    storage_service.list_servitutter(case.case_id),
-    case.target_matrikel,
-)
+servitutter = storage_service.list_servitutter(case.case_id)
 
 if not servitutter:
     render_empty_state("Ingen servitutter endnu", "Kør udtræk, når chunks er klar.")
@@ -123,11 +116,26 @@ else:
     }
     TARGET_LABEL = {True: "✅ Ja", False: "❌ Nej", None: "❓ Uafklaret"}
 
+    unconfirmed = [s for s in servitutter if not s.attest_confirmed]
+    if unconfirmed:
+        st.warning(
+            f"**{len(unconfirmed)} servitut(ter) fundet i akter men ikke i tinglysningsattesten.** "
+            f"Disse er markeret med ⚠️ og bør verificeres manuelt.",
+            icon="⚠️",
+        )
+
     for srv in servitutter:
         icon, badge_label = MARKERING_BADGE.get(srv.byggeri_markering or "", ("—", "Ikke vurderet"))
         title_text = srv.title or "Ukendt titel"
+        unconfirmed_prefix = "⚠️ &nbsp;" if not srv.attest_confirmed else ""
 
-        with st.expander(f"{icon} &nbsp; {title_text}", expanded=False):
+        with st.expander(f"{unconfirmed_prefix}{icon} &nbsp; {title_text}", expanded=False):
+            if not srv.attest_confirmed:
+                st.warning(
+                    "Ikke bekræftet i tinglysningsattesten — fundet i aktdokument. Verificér manuelt.",
+                    icon="⚠️",
+                )
+
             # Første række: dato og matrikel-scope
             col_a, col_b, col_c = st.columns([2, 1, 1])
             col_a.markdown(f"**Løbenummer / dato**\n\n{srv.date_reference or '—'}")
