@@ -21,6 +21,24 @@ from app.utils.ids import generate_servitut_id
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# Chunk scoring constants
+# ---------------------------------------------------------------------------
+
+_SCORE_AKT_NR         = 10   # eksakt akt_nr-match (normaliseret)
+_SCORE_DATE_REF       = 5    # date_reference-match (normaliseret)
+_SCORE_LOB_SUFFIX     = 3    # løbenummer-suffix match
+_SCORE_MATRIKEL       = 2    # matrikelreference
+_SCORE_TITLE_WORD     = 1    # ord ≥6 tegn fra canonical title
+_MIN_SCORE_INCLUDE    = 2    # minimum for at en chunk er kandidat
+_MAX_CANDIDATE_CHUNKS = 12
+_MAX_CANDIDATE_CHARS  = 16_000
+
+_TITLE_STOPWORDS = {
+    "vedrørende", "tinglyst", "matrikel", "matriklerne",
+    "ejendommen", "ejere", "servitut", "servitutter",
+}
+
 
 def _resolve_extraction_provider() -> str | None:
     if settings.EXTRACTION_LLM_PROVIDER.strip():
@@ -137,6 +155,118 @@ def _resolve_canonical_key(
 
 
 # ---------------------------------------------------------------------------
+# Deterministisk chunk-selektion
+# ---------------------------------------------------------------------------
+
+def _build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]]:
+    """Preberegn normaliserede søgesignaler fra canonical-listen."""
+    signals: dict[str, set[str]] = {
+        "akt_nr": set(),
+        "date_ref": set(),
+        "lob_suffix": set(),
+        "matrikel": set(),
+        "title_word": set(),
+    }
+    for s in canonical_list:
+        if s.akt_nr:
+            signals["akt_nr"].add(_normalize_akt_nr(s.akt_nr))
+        if s.date_reference:
+            signals["date_ref"].add(re.sub(r"[\s.\-]", "", s.date_reference).lower())
+            comps = _extract_date_components(s.date_reference)
+            lob = comps.get("løbenummer_suffix")
+            if lob:
+                signals["lob_suffix"].add(re.sub(r"[\s.\-]", "", lob).lower())
+        for m in (s.applies_to_matrikler or []):
+            if m:
+                signals["matrikel"].add(m.lower())
+        if s.title:
+            for word in s.title.lower().split():
+                word_clean = re.sub(r"[^\w]", "", word)
+                if len(word_clean) >= 6 and word_clean not in _TITLE_STOPWORDS:
+                    signals["title_word"].add(word_clean)
+    return signals
+
+
+def _select_candidate_chunks(
+    chunk_list: List[Chunk],
+    canonical_list: List[Servitut],
+    context_window: int = 1,
+) -> List[Chunk]:
+    """
+    Score chunks mod canonical-signaler og returner top-N kandidater med kontekstvinduer.
+    Returnerer tom liste hvis ingen chunks har tilstrækkelig signal (→ skip LLM-kald).
+    """
+    signals = _build_scoring_signals(canonical_list)
+
+    scored: list[tuple[int, int, list[str]]] = []
+    for i, chunk in enumerate(chunk_list):
+        text_norm = re.sub(r"[\s.\-]", "", chunk.text).lower()
+        text_lower = chunk.text.lower()
+        score = 0
+        reasons: list[str] = []
+
+        for sig in signals["akt_nr"]:
+            if sig and sig in text_norm:
+                score += _SCORE_AKT_NR
+                reasons.append(f"akt_nr:{sig}")
+        for sig in signals["date_ref"]:
+            if sig and sig in text_norm:
+                score += _SCORE_DATE_REF
+                reasons.append(f"date_ref:{sig}")
+        for sig in signals["lob_suffix"]:
+            if sig and sig in text_norm:
+                score += _SCORE_LOB_SUFFIX
+                reasons.append(f"lob_suffix:{sig}")
+        for sig in signals["matrikel"]:
+            if sig and sig in text_lower:
+                score += _SCORE_MATRIKEL
+                reasons.append(f"matrikel:{sig}")
+        for sig in signals["title_word"]:
+            if sig and sig in text_lower:
+                score += _SCORE_TITLE_WORD
+                reasons.append(f"title_word:{sig}")
+
+        scored.append((score, i, reasons))
+
+    max_score = max((s for s, _, _ in scored), default=0)
+    if max_score == 0:
+        logger.info("_select_candidate_chunks: ingen signal — springer LLM over")
+        return []
+
+    score_by_idx = {i: s for s, i, _ in scored}
+    hit_indices = {i for s, i, _ in scored if s >= _MIN_SCORE_INCLUDE}
+
+    with_context: set[int] = set()
+    for i in hit_indices:
+        for j in range(max(0, i - context_window), min(len(chunk_list), i + context_window + 1)):
+            with_context.add(j)
+
+    # Cap: sorter efter score desc, tag top 12, sorter tilbage til dokumentrækkefølge
+    sorted_by_score = sorted(with_context, key=lambda i: score_by_idx.get(i, 0), reverse=True)
+    top_indices = sorted(sorted_by_score[:_MAX_CANDIDATE_CHUNKS])
+
+    # Anvend tegnloft i dokumentrækkefølge
+    result_chunks: list[Chunk] = []
+    total_chars = 0
+    for i in top_indices:
+        chunk = chunk_list[i]
+        if total_chars + len(chunk.text) > _MAX_CANDIDATE_CHARS:
+            break
+        result_chunks.append(chunk)
+        total_chars += len(chunk.text)
+
+    logger.info(
+        f"_select_candidate_chunks: {len(result_chunks)}/{len(chunk_list)} chunks valgt, "
+        f"{total_chars} tegn, max_score={max_score}"
+    )
+    for s, i, reasons in scored:
+        if s > 0:
+            logger.debug(f"  chunk[{i}] score={s} reasons={reasons}")
+
+    return result_chunks
+
+
+# ---------------------------------------------------------------------------
 # LLM call
 # ---------------------------------------------------------------------------
 
@@ -160,7 +290,22 @@ def _enrich_from_doc(
 
     prompt_template = _load_prompt("enrich_servitut")
     canonical_json = _build_canonical_json(canonical_list)
-    chunks_text = _build_chunks_text(chunk_list)
+
+    candidate_chunks = _select_candidate_chunks(chunk_list, canonical_list)
+    if not candidate_chunks:
+        logger.info(f"Ingen kandidat-chunks for {doc_id} — springer LLM-kald over")
+        _emit_progress(
+            progress_callback,
+            doc_id=doc_id,
+            source_type="akt",
+            stage="completed",
+            progress=1.0,
+            message="Ingen relevante chunks fundet",
+            servitut_count=0,
+        )
+        return []
+
+    chunks_text = _build_chunks_text(candidate_chunks)
     akt_dok_hint = doc_filename or doc_id
     prompt = (
         prompt_template

@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.servitut import Servitut
 from app.services.extraction import llm_extractor
+from app.services.extraction.enricher import _select_candidate_chunks
 from app.services.extraction.merger import _enrich_canonical
 from app.services import extraction_service
 
@@ -295,6 +296,79 @@ def test_extract_document_servitutter_parses_structured_scope_fields():
     assert result[0].raw_matrikel_references == ["1o", "1v"]
     assert result[0].raw_scope_text == "Vedr. matr.nr. 1o og 1v"
     assert result[0].scope_source == "akt"
+
+
+def make_canonical(date_reference: str, akt_nr: str = None, title: str = "Test") -> Servitut:
+    return Servitut(
+        servitut_id="srv-canonical",
+        case_id="case-test",
+        source_document="doc-attest",
+        date_reference=date_reference,
+        akt_nr=akt_nr,
+        title=title,
+    )
+
+
+def test_select_candidate_chunks_scores_akt_nr():
+    """Chunk med akt_nr-match inkluderes."""
+    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    chunk_hit = make_chunk("doc-a", page=1, text="Se akt 40F439 vedr. byggelinje")
+    chunk_miss = make_chunk("doc-a", page=2, text="Ingen relevante oplysninger her overhovedet")
+
+    result = _select_candidate_chunks([chunk_hit, chunk_miss], [canonical])
+
+    assert chunk_hit in result
+    # chunk_miss kan inkluderes som kontekstvindue (nabo), men chunk_hit skal altid med
+    chunk_ids = [c.chunk_id for c in result]
+    assert chunk_hit.chunk_id in chunk_ids
+
+
+def test_select_candidate_chunks_no_signal():
+    """Ingen match → tom liste returneres."""
+    canonical = make_canonical("11.03.1974-1904-40", akt_nr="40 F 439")
+    chunks = [
+        make_chunk("doc-a", page=i, text="Helt irrelevant tekst om noget andet")
+        for i in range(1, 4)
+    ]
+
+    result = _select_candidate_chunks(chunks, [canonical])
+
+    assert result == []
+
+
+def test_select_candidate_chunks_context_window():
+    """Naboer til en hit-chunk inkluderes i kontekstvinduet."""
+    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    chunks = [
+        make_chunk("doc-a", page=1, text="Intet interessant her"),         # index 0 — nabo
+        make_chunk("doc-a", page=2, text="Akt 40F439 omhandler vejret"),   # index 1 — hit
+        make_chunk("doc-a", page=3, text="Fortsat tekst om sagen"),        # index 2 — nabo
+        make_chunk("doc-a", page=4, text="Fuldstændigt irrelevant xyz"),   # index 3 — ude af vindue
+    ]
+
+    result = _select_candidate_chunks(chunks, [canonical], context_window=1)
+
+    result_ids = [c.chunk_id for c in result]
+    assert chunks[0].chunk_id in result_ids  # nabo før
+    assert chunks[1].chunk_id in result_ids  # hit
+    assert chunks[2].chunk_id in result_ids  # nabo efter
+
+
+def test_select_candidate_chunks_char_cap():
+    """Tegnloftet på 16000 tegn respekteres."""
+    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    # Lav én hit-chunk efterfulgt af mange store chunks der tilsammen overstiger loftet
+    big_text = "A" * 5000
+    hit_chunk = make_chunk("doc-a", page=1, text="40F439 kort hit")
+    big_chunks = [make_chunk("doc-a", page=i, text=big_text) for i in range(2, 8)]
+
+    # Sæt hit_chunk som nabo til de store chunks (context_window=1 → page2 inkluderes)
+    all_chunks = [hit_chunk] + big_chunks
+
+    result = _select_candidate_chunks(all_chunks, [canonical], context_window=1)
+
+    total_chars = sum(len(c.text) for c in result)
+    assert total_chars <= 16_000
 
 
 def test_enrich_canonical_preserves_attest_scope_over_akt_scope():
