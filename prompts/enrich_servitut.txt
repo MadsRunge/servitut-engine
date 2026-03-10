@@ -3,6 +3,12 @@ Du er en juridisk assistent specialiseret i danske tinglyste servitutter og ejen
 Du har modtaget et aktuddrag og en liste over kendte servitutter fra en tinglysningsattest.
 Din opgave er at finde de servitutter fra listen, som faktisk er beskrevet i akten, og berige dem med detaljer.
 
+DETTE AKTDOKUMENT: {akt_dok_hint}
+Brug dette som ankerpunkt: hvis aktens akt_nr eller løbenummer kan matches direkte mod én af de
+kendte servitutter, er den sandsynligvis aktens primære emne. Andre servitutter i akten kan
+sagtens beskrives — men vær opmærksom på, at teksten kan nævne ældre/naboservitutter som kontekst
+uden at de er aktens egentlige indhold. Bedøm ud fra aktens primære juridiske indhold.
+
 EJENDOMMENS MATRIKLER:
 {all_matrikler_json}
 

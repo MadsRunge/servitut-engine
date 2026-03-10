@@ -142,3 +142,47 @@
 - Updated extraction calls to honor `EXTRACTION_*` settings and report generation to honor `REPORT_*` settings, so extraction and report can now use different providers in the same run
 - Updated `.env.example` to document the new split configuration and set the local `.env` explicitly to `anthropic`/`claude-sonnet-4-6` for extraction and `deepseek`/`deepseek-reasoner` for report generation
 - Verified with `.venv/bin/pytest tests/test_llm_service.py tests/test_extraction_service.py tests/test_report_generation.py -q` (`31 passed`) and a runtime config check showing `EXTRACTION_PROVIDER=anthropic`, `EXTRACTION_MODEL=claude-sonnet-4-6`, `REPORT_PROVIDER=deepseek`, `REPORT_MODEL=deepseek-reasoner`
+
+## Middelfart priority rerun plan
+
+- [x] Reset Middelfart extraction/report artifacts without touching OCR/chunks
+- [x] Re-run extraction and historical report generation with the current Claude-extraction / DeepSeek-report split
+- [x] Inspect `11.03.1974-1904-40` and nearby 1974 rows to see whether the new priority logic resolved the akt match
+- [x] Document whether the remaining issue is solved, reduced, or still requires another fix
+
+## Middelfart priority rerun review
+
+- Reset the generated `servitutter/` and `reports/` directories for `case-683ad567` while keeping OCR and chunk artifacts intact
+- Re-ran extraction with all case matrikler (`0069f`, `0001o`, `0038b`, `0022a`, `0001v`) as the intended target scope for the historical evaluation
+- The decisive akt `doc-d25aaf4c` (`40_F_439_indskannetakt.pdf`) returned `0 match(es)` during enrichment, so the new priority logic did not get a valid dedicated-match candidate for `11.03.1974-1904-40`
+- The final extracted 1974 rows still show the wrong enrichment source:
+  - `11.03.1974-1904-40` ended as `source_document=doc-79628fe3`, `akt_nr=40_F_439`, `raw_matrikel_references=['1n']`, `scope_source='akt'`
+  - `03.07.1974-5375-40` remained tied to `doc-79628fe3` (`Indskannet akt 40 B 649.pdf`) with matrikel `22a`
+- This means the priority change alone did **not** solve the 1974 problem; the root cause is upstream of the priority rule because the dedicated akt is not yielding a usable canonical match
+- Inspection of `doc-d25aaf4c` chunks shows OCR text dominated by later 1982/2005/2009 material and only weak `40_F_439` anchors, while `doc-79628fe3` contains explicit 1974 kabeldeklaration text for `22a`/`67`, which explains why background enrichment still wins
+- The full-case Claude extraction also hit Anthropic rate limits (`429 rate_limit_error`) on several akt calls, so the current Sonnet 4.6 setup is not yet robust for an unrestricted Middelfart full-case rerun without throttling, retries, or lower prompt volume
+
+## LLM payload analysis plan
+
+- [x] Inspect extraction and enrichment prompt assembly to identify exactly which akt content is sent to the LLM
+- [x] Measure prompt sizes for the Middelfart akt documents using the current chunk files and prompts
+- [x] Estimate why the current payloads exceed the configured Claude input token budget per minute
+- [x] Summarize the concrete payload structure and the biggest token drivers
+
+## LLM payload analysis review
+
+- Akt-enrichment sender hele `chunk_list` for hvert akt-dokument til LLM'en via `_build_chunks_text(chunk_list)` i `app/services/extraction/enricher.py`; der sker ingen retrieval eller top-k-filtering før kaldet
+- Chunking er side-/afsnitsbaseret med `MAX_CHUNK_SIZE=2000` og `CHUNK_OVERLAP=200`, men enrichment samler derefter alle chunks for dokumentet tilbage i én stor prompt
+- Den statiske enrich-prompt uden akttekst er ca. `5603` tegn, inkl. instruktionsblokken, case-matrikler og et repræsentativt canonical JSON på ca. `1294` tegn; den store omkostning er derfor selve aktteksten
+- Middelfart-målingen viser følgende omtrentlige inputstørrelser pr. akt (`tegn / ~tokens`):
+  - `doc-86bd246c` / `Indskannet akt 40 D 66.pdf`: `121626` tegn / ca. `30406` tokens
+  - `doc-d25aaf4c` / `40_F_439_indskannetakt.pdf`: `72473` tegn / ca. `18118` tokens
+  - `doc-888aefda` / `Indskannet akt 40 B 405.pdf`: `61701` tegn / ca. `15425` tokens
+  - `doc-a1d14fd2` / `40_C_239_indskannetakt.pdf`: `55298` tegn / ca. `13824` tokens
+  - `doc-f3b5c988` / `40_P_167_indskannetakt.pdf`: `52857` tegn / ca. `13214` tokens
+  - `doc-540a3618` / `Indskannet akt 40.pdf`: `43070` tegn / ca. `10768` tokens
+  - `doc-79628fe3` / `Indskannet akt 40 B 649.pdf`: `41633` tegn / ca. `10408` tokens
+  - `doc-a021259a` / `Indskannet akt 40 M 201.pdf`: `32853` tegn / ca. `8213` tokens
+  - `doc-19f507cc` / `Indskannet akt 40C 164.pdf`: `13799` tegn / ca. `3450` tokens
+- Samlet over de 9 Middelfart-akter er enrichment-payloaden ca. `495310` tegn, dvs. omtrent `123828` input tokens, før output tokens
+- Det forklarer rate-limit problemet mod Claude Sonnet 4.6: flere enkelte akt-prompts er i sig selv meget store, og hele Middelfart-batchen ligger langt over organisationens `30000` input-tokens-per-minute grænse

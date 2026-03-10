@@ -89,10 +89,17 @@ def extract_servitutter(
     for c in akt_chunks:
         akt_by_doc.setdefault(c.document_id, []).append(c)
 
+    doc_filename_by_id: dict[str, str] = {}
+    for doc_id in akt_by_doc:
+        doc = storage_service.load_document(case_id, doc_id)
+        if doc and doc.filename:
+            doc_filename_by_id[doc_id] = doc.filename
+
     return enrich_canonical_list(
         canonical_list,
         akt_by_doc,
         case_id,
         all_matrikler=all_matrikler,
+        doc_filename_by_id=doc_filename_by_id,
         progress_callback=progress_callback,
     )

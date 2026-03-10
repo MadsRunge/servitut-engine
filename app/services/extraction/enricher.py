@@ -146,6 +146,7 @@ def _enrich_from_doc(
     canonical_list: List[Servitut],
     all_matrikler: List[str],
     progress_callback: Optional[ProgressCallback],
+    doc_filename: Optional[str] = None,
 ) -> List[dict]:
     """One LLM call per akt: ask which canonical servitutter it contains."""
     _emit_progress(
@@ -160,10 +161,12 @@ def _enrich_from_doc(
     prompt_template = _load_prompt("enrich_servitut")
     canonical_json = _build_canonical_json(canonical_list)
     chunks_text = _build_chunks_text(chunk_list)
+    akt_dok_hint = doc_filename or doc_id
     prompt = (
         prompt_template
         .replace("{canonical_json}", canonical_json)
         .replace("{all_matrikler_json}", json.dumps(all_matrikler, ensure_ascii=False))
+        .replace("{akt_dok_hint}", akt_dok_hint)
         .replace("{chunks_text}", chunks_text)
     )
 
@@ -215,6 +218,7 @@ def enrich_canonical_list(
     akt_chunks_by_doc: dict[str, List[Chunk]],
     case_id: str,
     all_matrikler: Optional[List[str]] = None,
+    doc_filename_by_id: Optional[dict[str, str]] = None,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> List[Servitut]:
     """
@@ -269,6 +273,7 @@ def enrich_canonical_list(
             canonical_list,
             all_matrikler,
             progress_callback,
+            doc_filename=doc_filename_by_id.get(doc_id) if doc_filename_by_id else None,
         )
 
         for item in items:
