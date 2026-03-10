@@ -7,6 +7,7 @@ import streamlit as st
 
 from app.services import case_service, storage_service
 from app.services.chunking_service import chunk_pages
+from app.services.document_classifier import classify_document
 from app.models.document import Document
 from app.services.ocr_service import process_document, summarize_pages
 from streamlit_app.ui import (
@@ -18,6 +19,12 @@ from streamlit_app.ui import (
     select_case,
     setup_page,
 )
+
+
+def _preserve_known_document_type(document_type: str) -> str | None:
+    if document_type in {"akt", "tinglysningsattest"}:
+        return document_type
+    return None
 
 
 def render_batch_snapshot(snapshot_ph, statuses: dict[str, tuple[str, str]]) -> None:
@@ -46,6 +53,11 @@ def run_ocr_for_document(case_id: str, doc: Document) -> tuple[bool, str]:
         doc.chunk_count = len(chunks)
         doc.ocr_blank_pages = blank
         doc.ocr_low_conf_pages = low
+        doc.document_type = classify_document(
+            doc.filename,
+            pages=pages,
+            requested_type=_preserve_known_document_type(doc.document_type),
+        )
         doc.parse_status = "ocr_done"
         storage_service.save_document(doc)
 

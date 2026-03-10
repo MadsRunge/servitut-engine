@@ -1,20 +1,29 @@
 import shutil
 from typing import List
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.models.document import Document
 from app.services import case_service, storage_service
+from app.services.document_classifier import classify_document, validate_document_type
 from app.utils.ids import generate_doc_id
 
 router = APIRouter()
 
 
 @router.post("/{case_id}/documents", response_model=Document, status_code=201)
-async def upload_document(case_id: str, file: UploadFile = File(...)):
+async def upload_document(
+    case_id: str,
+    file: UploadFile = File(...),
+    document_type: str | None = Form(default=None),
+):
     case = case_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+    try:
+        requested_type = validate_document_type(document_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     doc_id = generate_doc_id()
     pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
@@ -28,6 +37,7 @@ async def upload_document(case_id: str, file: UploadFile = File(...)):
         case_id=case_id,
         filename=file.filename or "document.pdf",
         file_path=str(pdf_path),
+        document_type=classify_document(file.filename or "document.pdf", requested_type=requested_type),
         parse_status="pending",
     )
     storage_service.save_document(doc)

@@ -37,6 +37,97 @@ def _resolve_report_model() -> str | None:
     return None
 
 
+def _extract_json_object(text: str) -> dict:
+    candidates = [text.strip()]
+    if "```" in text:
+        import re
+
+        fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start != -1 and end > start:
+        candidates.append(text[start:end].strip())
+
+    for candidate in dict.fromkeys(candidates):
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    raise ValueError("No JSON object could be parsed from report response")
+
+
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _build_report_entries(
+    entry_payloads: List[dict],
+) -> List[ReportEntry]:
+    entries: List[ReportEntry] = []
+    for i, entry_data in enumerate(entry_payloads, 1):
+        scope_val = entry_data.get("scope")
+        entries.append(
+            ReportEntry(
+                nr=i,
+                date_reference=entry_data.get("date_reference"),
+                description=entry_data.get("description"),
+                beneficiary=entry_data.get("beneficiary"),
+                disposition=entry_data.get("disposition"),
+                legal_type=entry_data.get("legal_type"),
+                action=entry_data.get("action"),
+                relevant_for_project=_coerce_bool(
+                    entry_data.get("relevant_for_project"),
+                    default=scope_val == "Ja",
+                ),
+                scope=scope_val,
+                scope_detail=entry_data.get("scope_detail"),
+                servitut_id=entry_data.get("servitut_id", ""),
+            )
+        )
+    return entries
+
+
+def _escape_markdown_cell(value: object) -> str:
+    text = str(value or "—")
+    text = " ".join(text.splitlines()).strip()
+    return text.replace("|", "\\|")
+
+
+def _build_markdown_table(entries: List[ReportEntry]) -> str:
+    header = (
+        "| Nr. | Dato/løbenummer | Beskrivelse | Påtaleberettiget | "
+        "Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet |"
+    )
+    separator = "|-----|-----------------|-------------|------------------|-------------------|------------------------|---------------------|------------------------|"
+    rows = [
+        "| "
+        + " | ".join(
+            [
+                _escape_markdown_cell(entry.nr),
+                _escape_markdown_cell(entry.date_reference),
+                _escape_markdown_cell(entry.description),
+                _escape_markdown_cell(entry.beneficiary),
+                _escape_markdown_cell(entry.disposition),
+                _escape_markdown_cell(entry.legal_type),
+                _escape_markdown_cell(entry.action),
+                _escape_markdown_cell(entry.scope_detail or entry.scope),
+            ]
+        )
+        + " |"
+        for entry in entries
+    ]
+    return "\n".join([header, separator] + rows)
+
+
 def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
@@ -80,37 +171,9 @@ def generate_report(
             max_tokens=8192,
             model=_resolve_report_model(),
         ).strip()
-
-        # Extract markdown table from delimited section (outside JSON to avoid escaping issues)
-        md_start = response_text.find("--- MARKDOWN TABEL START ---")
-        md_end = response_text.find("--- MARKDOWN TABEL SLUT ---")
-        if md_start != -1 and md_end != -1:
-            markdown_content = response_text[md_start + len("--- MARKDOWN TABEL START ---"):md_end].strip()
-
-        # Parse JSON response — only the JSON object, before the markdown section
-        json_text = response_text[:md_start] if md_start != -1 else response_text
-        start = json_text.find("{")
-        end = json_text.rfind("}") + 1
-        if start != -1 and end > start:
-            data = json.loads(json_text[start:end])
-            notes = data.get("notes")
-            for i, entry_data in enumerate(data.get("entries", []), 1):
-                scope_val = entry_data.get("scope")
-                entries.append(
-                    ReportEntry(
-                        nr=i,
-                        date_reference=entry_data.get("date_reference"),
-                        description=entry_data.get("description"),
-                        beneficiary=entry_data.get("beneficiary"),
-                        disposition=entry_data.get("disposition"),
-                        legal_type=entry_data.get("legal_type"),
-                        action=entry_data.get("action"),
-                        relevant_for_project=scope_val == "Ja",
-                        scope=scope_val,
-                        scope_detail=entry_data.get("scope_detail"),
-                        servitut_id=entry_data.get("servitut_id", ""),
-                    )
-                )
+        data = _extract_json_object(response_text)
+        notes = data.get("notes")
+        entries = _build_report_entries(data.get("entries", []))
     except Exception as e:
         logger.error(f"Report generation error: {e}")
         # Fallback: build basic entries from servitutter
@@ -137,6 +200,8 @@ def generate_report(
                     servitut_id=srv.servitut_id,
                 )
             )
+
+    markdown_content = _build_markdown_table(entries) if entries else None
 
     report = Report(
         report_id=report_id,

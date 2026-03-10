@@ -1,5 +1,6 @@
 from app.models.case import Case
 from app.models.document import Document, PageData
+from app.models.servitut import Servitut
 from app.services import matrikel_service, storage_service
 
 
@@ -75,6 +76,21 @@ def test_resolve_target_matrikel_scope_multi_matrikel():
     assert matrikel_service.resolve_target_matrikel_scope(["1v"], ["1o", "1v"]) is True
     assert matrikel_service.resolve_target_matrikel_scope(["38b"], ["1o", "1v"]) is False
     assert matrikel_service.resolve_target_matrikel_scope([], ["1o", "1v"]) is None
+
+
+def test_filter_servitutter_for_target_accepts_single_target_string():
+    servitutter = [
+        Servitut(
+            servitut_id="srv-1",
+            case_id="case-test",
+            source_document="doc-1",
+            applies_to_matrikler=["0005ay"],
+        )
+    ]
+    filtered = matrikel_service.filter_servitutter_for_target(servitutter, "0005ay")
+
+    assert len(filtered) == 1
+    assert filtered[0].applies_to_target_matrikel is True
 
 
 def test_list_documents_is_metadata_only_by_default(tmp_path, monkeypatch):

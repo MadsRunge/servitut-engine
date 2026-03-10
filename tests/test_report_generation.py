@@ -64,13 +64,7 @@ MOCK_API_RESPONSE = """{
     }
   ],
   "notes": "Alt ser ud til at være i orden."
-}
-
---- MARKDOWN TABEL START ---
-| Nr. | Dato | Beskrivelse |
-|-----|------|-------------|
-| 1 | 01.01.2000 | En testservitut |
---- MARKDOWN TABEL SLUT ---"""
+}"""
 
 
 def test_report_fallback_on_api_error():
@@ -102,6 +96,8 @@ def test_report_with_mock_api_response():
     assert report.servitutter[0].description == "En testservitut om vejret."
     assert report.notes == "Alt ser ud til at være i orden."
     assert report.markdown_content is not None
+    assert "| Nr. | Dato/løbenummer |" in report.markdown_content
+    assert "En testservitut om vejret." in report.markdown_content
 
 
 def test_report_uses_deepseek_reasoner_by_default(monkeypatch):
@@ -128,6 +124,18 @@ def test_report_uses_explicit_report_model_override(monkeypatch):
 
     _, kwargs = mock_generate_text.call_args
     assert kwargs["model"] == "deepseek-chat"
+
+
+def test_report_accepts_json_wrapped_in_code_fence():
+    servitutter = [make_mock_servitut(1)]
+    chunks = make_mock_chunks()
+    wrapped_response = f"```json\n{MOCK_API_RESPONSE}\n```"
+
+    with patch("app.services.report_service.generate_text", return_value=wrapped_response):
+        report = generate_report(servitutter, chunks, "case-test")
+
+    assert len(report.servitutter) == 1
+    assert report.notes == "Alt ser ud til at være i orden."
 
 
 def test_report_includes_all_servitutter_with_scope_annotation():

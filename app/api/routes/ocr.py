@@ -7,9 +7,16 @@ from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.services import case_service, storage_service
 from app.services.chunking_service import chunk_pages
+from app.services.document_classifier import classify_document
 from app.services.ocr_service import process_document, summarize_pages
 
 router = APIRouter()
+
+
+def _preserve_known_document_type(document_type: str) -> str | None:
+    if document_type in {"akt", "tinglysningsattest"}:
+        return document_type
+    return None
 
 
 @router.post("/{case_id}/documents/{doc_id}/ocr", response_model=Document)
@@ -40,6 +47,11 @@ def run_ocr(case_id: str, doc_id: str):
         doc.chunk_count = len(chunks)
         doc.ocr_blank_pages = blank
         doc.ocr_low_conf_pages = low
+        doc.document_type = classify_document(
+            doc.filename,
+            pages=pages,
+            requested_type=_preserve_known_document_type(doc.document_type),
+        )
         doc.parse_status = "ocr_done"
         storage_service.save_document(doc)
 

@@ -30,7 +30,7 @@ render_case_stats(case.case_id)
 
 servitutter = matrikel_service.filter_servitutter_for_target(
     storage_service.list_servitutter(case.case_id),
-    case.target_matrikel,
+    [case.target_matrikel] if case.target_matrikel else [],
 )
 if not servitutter:
     render_empty_state("Ingen servitutter", "Kør ekstraktion, før review og sporbarhed giver mening.")
