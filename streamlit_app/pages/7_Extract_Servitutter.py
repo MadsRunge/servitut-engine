@@ -5,8 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from app.core.config import settings
-from app.services import case_service, storage_service
+from app.services import storage_service
 from app.services.extraction_service import extract_servitutter
 from streamlit_app.ui import (
     render_case_banner,
@@ -29,45 +28,92 @@ render_case_banner(case)
 render_case_stats(case.case_id)
 
 all_chunks = storage_service.load_all_chunks(case.case_id)
-
-# --- Klargøringsstatus ---
-render_section(
-    "Klar til udtræk",
-    f"{len(all_chunks)} tekstuddrag på tværs af sagens dokumenter.",
-)
-
-# --- Byg filnavn-opslag ---
 documents = storage_service.list_documents(case.case_id)
 doc_name: dict[str, str] = {d.document_id: d.filename for d in documents}
 
+# --- Load cached canonical og scoring ---
+cached_canonical = storage_service.load_canonical_list(case.case_id)
+scoring_results = storage_service.load_scoring_results(case.case_id)
+
+# --- Klargøringsstatus ---
+render_section("Klar til udtræk", "Pipeline-oversigt inden LLM-kørsel.")
+
+if cached_canonical and scoring_results:
+    llm_docs = sum(1 for r in scoring_results if not r["skipped"])
+    skipped_docs = sum(1 for r in scoring_results if r["skipped"])
+    total_candidates = sum(r["candidate_count"] for r in scoring_results)
+    total_chars = sum(r["candidate_chars"] for r in scoring_results)
+    render_stat_cards([
+        ("Canonical", str(len(cached_canonical)), "Servitutter fra attest (cached)"),
+        ("Docs → LLM", str(llm_docs), f"{skipped_docs} springes over"),
+        ("Kandidat-chunks", str(total_candidates), f"af {len(all_chunks)} total"),
+        ("Kandidat-tegn", f"{total_chars:,}", "Sendes til LLM"),
+    ])
+    st.success(
+        f"Canonical liste og chunk-scoring klar — springer attest-udtræk over og bruger {total_candidates} pre-filtrerede chunks.",
+        icon="✅",
+    )
+elif cached_canonical:
+    render_stat_cards([
+        ("Canonical", str(len(cached_canonical)), "Servitutter fra attest (cached)"),
+        ("Chunks i alt", str(len(all_chunks)), "Fase 1 filtrerer ved kørsel"),
+    ])
+    st.info("Chunk-scoring ikke kørt — Fase 1 filtrerer chunks automatisk ved udtræk.", icon="ℹ️")
+    st.page_link("pages/6_Filter_Chunks.py", label="→ Kør chunk-scoring først (anbefalet)", icon="🔬")
+else:
+    render_stat_cards([
+        ("Chunks i alt", str(len(all_chunks)), "Klar til udtræk"),
+    ])
+    st.warning(
+        "Ingen cached canonical liste — attest-udtræk kører som Pas 1 (bruger ekstra tokens).",
+        icon="⚠️",
+    )
+    st.page_link("pages/6_Filter_Chunks.py", label="→ Udtræk canonical og kør scoring først", icon="🔬")
 
 # --- Extraction ---
 STAGE_ICON = {
-    "queued": "⏳",
-    "running": "⚙️",
-    "requesting": "⚙️",
-    "parsing": "⚙️",
+    "queued":    "⏳",
+    "running":   "⚙️",
+    "requesting":"⚙️",
+    "parsing":   "⚙️",
     "completed": "✅",
-    "failed": "❌",
+    "failed":    "❌",
+    "skipped":   "⊘",
 }
 
 if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
-    doc_count = len(dict.fromkeys(chunk.document_id for chunk in all_chunks))
-    doc_states: dict[str, dict] = {}
+    # Doc-count: attest tæller med hvis vi ikke har cache (Pas 1 kører)
+    tracked_doc_ids = set(c.document_id for c in all_chunks)
+    if cached_canonical:
+        # Attest-docs springes over i progress — tæl kun akt-docs
+        tracked_doc_ids = {
+            c.document_id for c in all_chunks
+            if doc_name.get(c.document_id, "") or True  # alle akt-docs
+        }
+        # Filtrer attest-doc ud fra tællingen
+        attest_doc_ids = {
+            d.document_id for d in documents
+            if d.document_type == "tinglysningsattest"
+        }
+        tracked_doc_ids -= attest_doc_ids
+    doc_count = len(tracked_doc_ids)
 
+    doc_states: dict[str, dict] = {}
     summary_ph = st.empty()
     progress_ph = st.empty()
     docs_ph = st.empty()
 
     summary_ph.markdown(f"**Starter udtræk — 0 af {doc_count} færdige**")
     progress_ph.progress(0.0)
-    docs_ph.caption("Klargør dokumentkø og afventer første status fra extraction...")
+    docs_ph.caption("Klargør dokumentkø...")
 
     def handle_progress(event: dict) -> None:
         doc_id = event["doc_id"]
         doc_states[doc_id] = event
-        completed = sum(1 for s in doc_states.values() if s["stage"] in {"completed", "failed"})
-
+        completed = sum(
+            1 for s in doc_states.values()
+            if s["stage"] in {"completed", "failed", "skipped"}
+        )
         summary_ph.markdown(f"**Behandler dokumenter — {completed} af {doc_count} færdige**")
         progress_ph.progress(completed / doc_count if doc_count else 1.0)
 
@@ -76,7 +122,11 @@ if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
             icon = STAGE_ICON.get(state["stage"], "⏳")
             name = doc_name.get(did, did)
             typ = "Tinglysningsattest" if state["source_type"] == "tinglysningsattest" else "Akt"
-            rows.append(f"{icon} &nbsp; **{name}** &nbsp; <span style='color:gray;font-size:0.85em'>{typ}</span>")
+            msg = state.get("message", "")
+            rows.append(
+                f"{icon} &nbsp; **{name}** &nbsp; "
+                f"<span style='color:gray;font-size:0.85em'>{typ} — {msg}</span>"
+            )
         docs_ph.markdown("\n\n".join(rows), unsafe_allow_html=True)
 
     try:
@@ -84,6 +134,7 @@ if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
             all_chunks,
             case.case_id,
             progress_callback=handle_progress,
+            cached_canonical=cached_canonical,
         )
         for srv in servitutter:
             storage_service.save_servitut(srv)
@@ -125,7 +176,6 @@ else:
             icon="⚠️",
         )
 
-    # Aggregeret overblik
     rød_n = sum(1 for s in servitutter if s.byggeri_markering == "rød")
     orange_n = sum(1 for s in servitutter if s.byggeri_markering == "orange")
     sort_n = sum(1 for s in servitutter if s.byggeri_markering == "sort")
@@ -147,7 +197,6 @@ else:
         unconfirmed_prefix = "⚠️ &nbsp;" if not srv.attest_confirmed else ""
 
         with st.expander(f"{unconfirmed_prefix}{icon} &nbsp; {title_text}", expanded=False):
-            # Første række: dato og matrikel-scope
             col_a, col_b, col_c = st.columns([2, 1, 1])
             col_a.markdown(f"**Løbenummer / dato**\n\n{srv.date_reference or '—'}")
             col_b.markdown(f"**Gælder målmatrikel**\n\n{TARGET_LABEL[srv.applies_to_target_matrikel]}")
@@ -155,7 +204,6 @@ else:
 
             st.divider()
 
-            # Anden række: juridisk kontekst
             col1, col2 = st.columns(2)
             col1.markdown(f"**Påtaleberettiget**\n\n{srv.beneficiary or '—'}")
             col1.markdown(f"**Rådighed / tilstand**\n\n{srv.disposition_type or '—'}")
@@ -164,7 +212,6 @@ else:
 
             st.divider()
 
-            # Beskrivelse og scope
             if srv.summary:
                 st.markdown(f"**Beskrivelse**\n\n{srv.summary}")
             if srv.scope_basis:
@@ -172,7 +219,6 @@ else:
             if srv.applies_to_matrikler:
                 st.caption(f"Gælder matrikler: {', '.join(srv.applies_to_matrikler)}")
 
-            # Evidens
             if srv.evidence:
                 with st.expander("Vis kildetekst"):
                     for ev in srv.evidence:

@@ -12,6 +12,11 @@ from app.services.extraction import (
     enrich_canonical_list,
 )
 from app.services import matrikel_service, storage_service
+from app.services.extraction.enricher import (
+    _build_scoring_signals,
+    _score_chunks,
+    _select_candidate_chunks,
+)
 
 logger = get_logger(__name__)
 
@@ -20,14 +25,17 @@ def extract_servitutter(
     chunks: List[Chunk],
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
+    cached_canonical: Optional[List[Servitut]] = None,
 ) -> List[Servitut]:
     """
     To-pas udtræk:
       Pas 1: Udtræk canonical liste fra tinglysningsattest (løbenumre som nøgle)
+             — springes over hvis cached_canonical er givet
       Pas 2: Udtræk detaljer fra individuelle akter
       Merge: Berig canonical med akt-detaljer, kassér duplikater
 
-    Fallback: Hvis ingen tinglysningsattest, udtræk fra alle akter som før.
+    Fallback: Hvis ingen tinglysningsattest og ingen cached_canonical,
+              udtræk fra alle akter direkte.
     """
     if not chunks:
         return []
@@ -47,8 +55,8 @@ def extract_servitutter(
         else:
             akt_chunks.append(chunk)
 
-    # --- Fallback: ingen tinglysningsattest ---
-    if not attest_chunks:
+    # --- Fallback: ingen tinglysningsattest og ingen cache ---
+    if not attest_chunks and not cached_canonical:
         logger.info("Ingen tinglysningsattest — udtræk fra alle akter direkte")
         relevant = _prescreeen_chunks(akt_chunks)
         if not relevant:
@@ -64,17 +72,24 @@ def extract_servitutter(
         )
         return _dedup_akt_servitutter(akt_list)
 
-    # --- Pas 1: Tinglysningsattest ---
-    logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
-    attest_by_doc: dict[str, list[Chunk]] = {}
-    for c in attest_chunks:
-        attest_by_doc.setdefault(c.document_id, []).append(c)
-    canonical_list = _extract_from_doc_chunks(
-        attest_by_doc,
-        case_id,
-        "tinglysningsattest",
-        progress_callback=progress_callback,
-    )
+    # --- Pas 1: Tinglysningsattest (spring over hvis cache er tilgængelig) ---
+    if cached_canonical:
+        logger.info(f"Pas 1: Bruger cached canonical liste ({len(cached_canonical)} servitutter) — springer LLM-kald over")
+        canonical_list = cached_canonical
+        attest_by_doc: dict[str, list[Chunk]] = {}
+        for c in attest_chunks:
+            attest_by_doc.setdefault(c.document_id, []).append(c)
+    else:
+        logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
+        attest_by_doc = {}
+        for c in attest_chunks:
+            attest_by_doc.setdefault(c.document_id, []).append(c)
+        canonical_list = _extract_from_doc_chunks(
+            attest_by_doc,
+            case_id,
+            "tinglysningsattest",
+            progress_callback=progress_callback,
+        )
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
     case = matrikel_service.sync_case_matrikler(case_id, attest_by_doc.keys())
@@ -103,3 +118,77 @@ def extract_servitutter(
         doc_filename_by_id=doc_filename_by_id,
         progress_callback=progress_callback,
     )
+
+
+def extract_canonical_from_attest(
+    case_id: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Servitut]:
+    """Kører kun Pas 1: udtræk canonical liste fra tinglysningsattest."""
+    chunks = storage_service.load_all_chunks(case_id)
+    attest_chunks: list[Chunk] = []
+    for c in chunks:
+        doc = storage_service.load_document(case_id, c.document_id)
+        if doc and doc.document_type == "tinglysningsattest":
+            attest_chunks.append(c)
+    if not attest_chunks:
+        return []
+    attest_by_doc: dict[str, list[Chunk]] = {}
+    for c in attest_chunks:
+        attest_by_doc.setdefault(c.document_id, []).append(c)
+    return _extract_from_doc_chunks(
+        attest_by_doc,
+        case_id,
+        "tinglysningsattest",
+        progress_callback=progress_callback,
+    )
+
+
+def score_akt_chunks_for_case(
+    case_id: str,
+    canonical_list: List[Servitut],
+) -> List[dict]:
+    """
+    Returnerer per-dok scoring-resultat til visning i Streamlit.
+    Hvert element indeholder metadata om chunks og hvilke der er valgt som kandidater.
+    """
+    signals = _build_scoring_signals(canonical_list)
+    documents = {
+        d.document_id: d
+        for d in storage_service.list_documents(case_id)
+        if d.document_type == "akt"
+    }
+    results = []
+    for doc_id, doc in documents.items():
+        chunks = storage_service.load_chunks(case_id, doc_id)
+        if not chunks:
+            continue
+        scored = _score_chunks(chunks, signals)
+        candidates = _select_candidate_chunks(chunks, canonical_list)
+        candidate_ids = {c.chunk_id for c in candidates}
+        max_score = max((s for s, _, _ in scored), default=0)
+        chunk_details = [
+            {
+                "chunk_id": chunks[i].chunk_id,
+                "page": chunks[i].page,
+                "score": s,
+                "reasons": r,
+                "text_preview": chunks[i].text[:150],
+                "selected": chunks[i].chunk_id in candidate_ids,
+            }
+            for s, i, r in scored
+            if s > 0
+        ]
+        results.append(
+            {
+                "doc_id": doc_id,
+                "filename": doc.filename,
+                "total_chunks": len(chunks),
+                "candidate_count": len(candidates),
+                "candidate_chars": sum(len(c.text) for c in candidates),
+                "max_score": max_score,
+                "skipped": len(candidates) == 0,
+                "chunk_details": chunk_details,
+            }
+        )
+    return results

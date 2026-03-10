@@ -67,11 +67,11 @@ else:
             elif stats.chunks == 0:
                 st.page_link("pages/3_Run_OCR.py", label="→ Kør OCR", icon="🔍")
             elif stats.servitutter == 0:
-                st.page_link("pages/6_Extract_Servitutter.py", label="→ Udtræk servitutter", icon="⚙️")
+                st.page_link("pages/6_Filter_Chunks.py", label="→ Filtrer chunks", icon="🔬")
             elif stats.reports == 0:
-                st.page_link("pages/7_Generate_Report.py", label="→ Generer redegørelse", icon="📄")
+                st.page_link("pages/8_Generate_Report.py", label="→ Generer redegørelse", icon="📄")
             else:
-                st.page_link("pages/8_Review.py", label="→ Review og sporbarhed", icon="🔎")
+                st.page_link("pages/9_Review.py", label="→ Review og sporbarhed", icon="🔎")
             st.caption(
                 f"{case.case_id} · oprettet {case.created_at:%Y-%m-%d %H:%M} · "
                 f"status {stats.case_status}"

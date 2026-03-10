@@ -637,21 +637,21 @@ for report in reports:
             data=markdown_export,
             file_name=f"{report.report_id}.md",
             mime="text/markdown",
-            use_container_width=True,
+            width="stretch",
         )
         export_col2.download_button(
             "Download rapport (.html)",
             data=html_export,
             file_name=f"{report.report_id}.html",
             mime="text/html",
-            use_container_width=True,
+            width="stretch",
         )
         export_col3.download_button(
             "Download rapportdata (.json)",
             data=json_export,
             file_name=f"{report.report_id}.json",
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
         )
 
         tab_cards, tab_table = st.tabs(["Læsbar visning", "Rapporttabel"])

@@ -198,6 +198,36 @@ def list_servitutter(case_id: str) -> List[Servitut]:
     return result
 
 
+# --- Canonical liste (tinglysningsattest-udtræk) ---
+
+def save_canonical_list(case_id: str, canonical_list: List[Servitut]) -> None:
+    path = _case_dir(case_id) / "canonical_list.json"
+    save_json(path, [s.model_dump() for s in canonical_list])
+    logger.debug(f"Saved canonical list ({len(canonical_list)}) for case {case_id}")
+
+
+def load_canonical_list(case_id: str) -> List[Servitut] | None:
+    path = _case_dir(case_id) / "canonical_list.json"
+    if not json_exists(path):
+        return None
+    return [Servitut(**s) for s in load_json(path)]
+
+
+# --- Chunk-scoring ---
+
+def save_scoring_results(case_id: str, results: list) -> None:
+    path = _case_dir(case_id) / "filter_scoring.json"
+    save_json(path, results)
+    logger.debug(f"Saved scoring results for case {case_id}")
+
+
+def load_scoring_results(case_id: str) -> list | None:
+    path = _case_dir(case_id) / "filter_scoring.json"
+    if not json_exists(path):
+        return None
+    return load_json(path)
+
+
 # --- Reports ---
 
 def save_report(report: Report) -> None:

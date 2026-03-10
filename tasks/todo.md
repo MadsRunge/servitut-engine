@@ -186,3 +186,58 @@
   - `doc-19f507cc` / `Indskannet akt 40C 164.pdf`: `13799` tegn / ca. `3450` tokens
 - Samlet over de 9 Middelfart-akter er enrichment-payloaden ca. `495310` tegn, dvs. omtrent `123828` input tokens, før output tokens
 - Det forklarer rate-limit problemet mod Claude Sonnet 4.6: flere enkelte akt-prompts er i sig selv meget store, og hele Middelfart-batchen ligger langt over organisationens `30000` input-tokens-per-minute grænse
+
+## Streamlit width migration plan
+
+- [x] Find alle `use_container_width`-kald i Streamlit-koden
+- [x] Udskift dem med det nye `width`-API med samme visuelle semantik
+- [x] Verificer at der ikke er flere `use_container_width`-kald tilbage
+
+## Streamlit width migration review
+
+- Opdaterede alle Streamlit-knapper, download-knapper og dataframes, så `use_container_width=True` nu er `width="stretch"` og `use_container_width=False` er `width="content"`
+- Rettede kald i `streamlit_app/pages/3_Run_OCR.py`, `streamlit_app/pages/6_Filter_Chunks.py` og `streamlit_app/pages/8_Generate_Report.py`
+- Verificerede med en tekstsøgning, at der ikke længere findes `use_container_width` i `streamlit_app`, `app` eller `tests`
+
+## OCR progress sync fix plan
+
+- [x] Gennemgå OCR-sidens batch-progress og find hvorfor UI'et bruger stale dokumentstatus
+- [x] Opdatér OCR-siden til at genlæse status fra `storage` efter hver afsluttet fil og vise total fremdrift for hele sagen
+- [x] Verificér ændringen med en fokuseret syntaks-/integritetskontrol
+
+## OCR progress sync review
+
+- OCR-siden i `streamlit_app/pages/3_Run_OCR.py` viser nu summary-metrics via placeholders, så `Dokumenter i alt`, `OCR færdige` og `Klar til kørsel` kan opdateres under batch-kørslen
+- Batch-progress bruger nu frisk status fra `storage_service.list_documents(case_id)` efter hver fil i stedet for den oprindelige `docs`-liste fra side-load
+- Snapshot-listen viser nu hele sagens dokumenter med status afledt fra faktisk `parse_status`, så allerede færdige dokumenter tæller med i fremdriften
+- Progressbaren viser total OCR-fremdrift for sagen (`ocr_done` / alle dokumenter) i stedet for kun antal gennemløbte batch-elementer
+- Verificerede ændringen med `uv run python -m py_compile streamlit_app/pages/3_Run_OCR.py`
+
+## Aalborg OCR reset plan
+
+- [x] Identificér Aalborg-sagen og kortlæg hvilke artefakter der er genereret fra OCR
+- [x] Nulstil OCR- og chunk-artefakter for Aalborg uden at slette originale PDF-filer eller sagsmetadata
+- [x] Verificér at dokumentmetadata er sat tilbage til pre-OCR status og dokumentér resultatet
+
+## Aalborg OCR reset review
+
+- Identificerede Aalborg-sagen som `case-947bbd23`
+- Fjernede alle genererede OCR-page JSON-filer i `storage/cases/case-947bbd23/ocr`, alle chunk JSON-filer i `storage/cases/case-947bbd23/chunks` samt alle eksisterende `ocr.pdf`-artefakter under dokumentmapperne
+- Nulstillede alle 12 dokumenters OCR-metadata tilbage til pre-OCR state: `parse_status='pending'`, `page_count=0`, `chunk_count=0`, `ocr_blank_pages=0`, `ocr_low_conf_pages=0`
+- Verificerede, at der ikke længere findes filer i `ocr/` eller `chunks/`, og at alle `original.pdf` stadig ligger intakt under dokumentmapperne
+- Ved efterkontrol viste UI'et `1` OCR-færdig; det skyldtes ikke en tællebug men at `doc-9b92f3d5` var blevet skrevet færdig igen kl. `2026-03-10 16:06:13`
+- Kørte derfor resetten igen og verificerede bagefter `OCR_DONE_COUNT=0` samt `0` filer i både `ocr/` og `chunks/`
+
+## OCR live progress refactor plan
+
+- [x] Reproducer hvorfor den aktuelle OCR-side ikke føles live under batch-kørsel
+- [x] Refaktorer batch-OCR til en rerun-baseret model, så siden genrender mellem dokumenter med frisk state fra storage
+- [x] Verificér den nye flowlogik og dokumentér resultatet
+
+## OCR live progress refactor review
+
+- Root cause var Streamlit execution-model: den tidligere batch-kode forsøgte at holde hele OCR-kørslen i ét langt run med placeholders, hvilket ikke gav en robust live-UI for lange OCR-job
+- Batch-OCR i `streamlit_app/pages/3_Run_OCR.py` kører nu ét dokument per rerun via `st.session_state`, så siden genindlæser mellem dokumenter og læser frisk status fra disk hver gang
+- Tilføjede batch-state pr. sag, progressvisning baseret på faktisk `ocr_done`-status, samt en `Stop batch-OCR`-knap
+- Deaktiverede enkelt-dokument-knapper og retry-knappen mens batch kører, så der ikke opstår konkurrerende OCR-skrivninger
+- Verificerede syntaksen med `uv run python -m py_compile streamlit_app/pages/3_Run_OCR.py`

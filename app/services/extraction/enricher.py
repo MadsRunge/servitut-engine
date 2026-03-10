@@ -37,6 +37,8 @@ _MAX_CANDIDATE_CHARS  = 16_000
 _TITLE_STOPWORDS = {
     "vedrørende", "tinglyst", "matrikel", "matriklerne",
     "ejendommen", "ejere", "servitut", "servitutter",
+    # Juridiske standardvendinger der optræder bredt i pantebrevs-tekst:
+    "prioritet", "pantegæld", "forud",
 }
 
 
@@ -119,7 +121,7 @@ def _build_canonical_json(canonical_list: List[Servitut]) -> str:
 def _resolve_canonical_key(
     item: dict,
     canonical_by_date: dict[str, str],
-    canonical_by_akt: dict[str, str],
+    canonical_by_akt: dict[str, list[str]],
     canonical_list: Optional[List[Servitut]] = None,
     canonical_years: Optional[dict[str, int]] = None,
 ) -> Optional[tuple[str, int]]:
@@ -133,20 +135,36 @@ def _resolve_canonical_key(
     Returns None if no canonical is found.
     """
     item_akt = item.get("akt_nr")
+    item_date = item.get("date_reference") or ""
     if item_akt:
         key = _normalize_akt_nr(item_akt)
-        canonical_key = canonical_by_akt.get(key)
-        if canonical_key:
-            return (canonical_key, 1)
+        candidates = canonical_by_akt.get(key, [])
+        if len(candidates) == 1:
+            # Unambiguous akt_nr match
+            return (candidates[0], 1)
+        elif len(candidates) > 1:
+            # Ambiguous akt_nr (same arkivskab, multiple servitutter) —
+            # disambiguate via date_reference if LLM provided one
+            if item_date:
+                exact = canonical_by_date.get(item_date)
+                if exact and exact in candidates:
+                    return (exact, 1)
+                # Fuzzy: find which candidate year matches item_date
+                if canonical_list:
+                    pseudo = Servitut(servitut_id="__tmp__", case_id="", source_document="", date_reference=item_date)
+                    for canonical in canonical_list:
+                        if (canonical.date_reference or "") in candidates and _servitut_matches(canonical, pseudo, canonical_years):
+                            return (canonical.date_reference or "", 1)
+            # Cannot disambiguate — fall through to date-based matching below
+            logger.debug(f"Ambigt akt_nr {item_akt!r} → {candidates} — falder tilbage til dato-match")
 
-    item_date = item.get("date_reference") or ""
     exact = canonical_by_date.get(item_date)
     if exact:
         return (exact, 2)
 
     # Priority 3: fuzzy date matching
     if item_date and canonical_list:
-        pseudo = Servitut(servitut_id="__tmp__", case_id="", date_reference=item_date)
+        pseudo = Servitut(servitut_id="__tmp__", case_id="", source_document="", date_reference=item_date)
         for canonical in canonical_list:
             if _servitut_matches(canonical, pseudo, canonical_years):
                 return (canonical.date_reference or "", 3)
@@ -187,17 +205,11 @@ def _build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]
     return signals
 
 
-def _select_candidate_chunks(
+def _score_chunks(
     chunk_list: List[Chunk],
-    canonical_list: List[Servitut],
-    context_window: int = 1,
-) -> List[Chunk]:
-    """
-    Score chunks mod canonical-signaler og returner top-N kandidater med kontekstvinduer.
-    Returnerer tom liste hvis ingen chunks har tilstrækkelig signal (→ skip LLM-kald).
-    """
-    signals = _build_scoring_signals(canonical_list)
-
+    signals: dict[str, set[str]],
+) -> list[tuple[int, int, list[str]]]:
+    """Score chunks mod canonical-signaler. Returnerer (score, index, reasons) for hvert chunk."""
     scored: list[tuple[int, int, list[str]]] = []
     for i, chunk in enumerate(chunk_list):
         text_norm = re.sub(r"[\s.\-]", "", chunk.text).lower()
@@ -227,6 +239,20 @@ def _select_candidate_chunks(
                 reasons.append(f"title_word:{sig}")
 
         scored.append((score, i, reasons))
+    return scored
+
+
+def _select_candidate_chunks(
+    chunk_list: List[Chunk],
+    canonical_list: List[Servitut],
+    context_window: int = 1,
+) -> List[Chunk]:
+    """
+    Score chunks mod canonical-signaler og returner top-N kandidater med kontekstvinduer.
+    Returnerer tom liste hvis ingen chunks har tilstrækkelig signal (→ skip LLM-kald).
+    """
+    signals = _build_scoring_signals(canonical_list)
+    scored = _score_chunks(chunk_list, signals)
 
     max_score = max((s for s, _, _ in scored), default=0)
     if max_score == 0:
@@ -278,7 +304,9 @@ def _enrich_from_doc(
     progress_callback: Optional[ProgressCallback],
     doc_filename: Optional[str] = None,
 ) -> List[dict]:
-    """One LLM call per akt: ask which canonical servitutter it contains."""
+    """One LLM call per akt: ask which canonical servitutter it contains.
+    chunk_list should already be pre-filtered candidate chunks (Fase 1).
+    """
     _emit_progress(
         progress_callback,
         doc_id=doc_id,
@@ -291,21 +319,7 @@ def _enrich_from_doc(
     prompt_template = _load_prompt("enrich_servitut")
     canonical_json = _build_canonical_json(canonical_list)
 
-    candidate_chunks = _select_candidate_chunks(chunk_list, canonical_list)
-    if not candidate_chunks:
-        logger.info(f"Ingen kandidat-chunks for {doc_id} — springer LLM-kald over")
-        _emit_progress(
-            progress_callback,
-            doc_id=doc_id,
-            source_type="akt",
-            stage="completed",
-            progress=1.0,
-            message="Ingen relevante chunks fundet",
-            servitut_count=0,
-        )
-        return []
-
-    chunks_text = _build_chunks_text(candidate_chunks)
+    chunks_text = _build_chunks_text(chunk_list)
     akt_dok_hint = doc_filename or doc_id
     prompt = (
         prompt_template
@@ -385,11 +399,13 @@ def enrich_canonical_list(
         (s.date_reference or ""): (s.date_reference or "")
         for s in canonical_list
     }
-    canonical_by_akt: dict[str, str] = {
-        _normalize_akt_nr(s.akt_nr): (s.date_reference or "")
-        for s in canonical_list
-        if s.akt_nr
-    }
+    # Byg akt_nr → liste af canonical keys (et akt_nr kan referere til flere servitutter
+    # der deler samme fysiske arkivskab, f.eks. 40_C_239 → 1903 + 1975)
+    canonical_by_akt: dict[str, list[str]] = {}
+    for s in canonical_list:
+        if s.akt_nr:
+            key = _normalize_akt_nr(s.akt_nr)
+            canonical_by_akt.setdefault(key, []).append(s.date_reference or "")
     # Year-frequency table for fuzzy matching (unambiguous year → 1 match)
     canonical_years: dict[str, int] = {}
     for s in canonical_list:
@@ -402,7 +418,30 @@ def enrich_canonical_list(
     # orphan_key → (item, doc_id, chunk_list) — fundet i akt men ikke i attest
     orphan_best: dict[str, tuple[dict, str, List[Chunk]]] = {}
 
+    # --- Fase 1: Deterministisk chunk-filtrering ---
+    logger.info("Fase 1: Scorer og filtrerer akt-chunks mod canonical-signaler")
+    candidate_chunks_by_doc: dict[str, list[Chunk]] = {}
     for doc_id, chunk_list in akt_chunks_by_doc.items():
+        candidates = _select_candidate_chunks(chunk_list, canonical_list)
+        if candidates:
+            candidate_chunks_by_doc[doc_id] = candidates
+        else:
+            logger.info(f"  {doc_id}: ingen kandidat-chunks — springer LLM-kald over")
+            _emit_progress(
+                progress_callback,
+                doc_id=doc_id,
+                source_type="akt",
+                stage="skipped",
+                progress=1.0,
+                message="Ingen relevante chunks — sprunget over",
+                servitut_count=0,
+            )
+    logger.info(
+        f"Fase 1 færdig: {len(candidate_chunks_by_doc)}/{len(akt_chunks_by_doc)} docs → LLM"
+    )
+
+    # --- Fase 2: LLM enrichment (kun docs med kandidater) ---
+    for doc_id, chunk_list in candidate_chunks_by_doc.items():
         _emit_progress(
             progress_callback,
             doc_id=doc_id,
