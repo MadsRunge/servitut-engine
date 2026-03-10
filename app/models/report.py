@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class ReportEntry(BaseModel):
     nr: int
     date_reference: Optional[str] = None
+    raw_text: Optional[str] = None  # Verbatim tekst fra akten
     description: Optional[str] = None
     beneficiary: Optional[str] = None
     disposition: Optional[str] = None

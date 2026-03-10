@@ -241,3 +241,30 @@
 - Tilføjede batch-state pr. sag, progressvisning baseret på faktisk `ocr_done`-status, samt en `Stop batch-OCR`-knap
 - Deaktiverede enkelt-dokument-knapper og retry-knappen mens batch kører, så der ikke opstår konkurrerende OCR-skrivninger
 - Verificerede syntaksen med `uv run python -m py_compile streamlit_app/pages/3_Run_OCR.py`
+
+## Report download button fix plan
+
+- [x] Find årsagen til `StreamlitDuplicateElementId` på rapport-siden
+- [x] Tilføj stabile unikke keys til rapportens download-knapper
+- [x] Verificér at siden stadig parser syntaktisk
+
+## Report download button fix review
+
+- Fejlen skyldtes tre `download_button`-widgets uden eksplicit `key`, gengivet i en loop over rapporter
+- Tilføjede unikke keys baseret på `report.report_id` til markdown-, html- og json-downloadknapperne i `streamlit_app/pages/8_Generate_Report.py`
+- Verificerede syntaksen med `uv run python -m py_compile streamlit_app/pages/8_Generate_Report.py`
+
+## Report fallback root-cause analysis plan
+
+- [x] Gennemgå rapport-pipelinen og identificér hvilke fejl der sender `generate_report()` i fallback
+- [x] Mål de faktiske inputstørrelser for rapport-prompts på Aalborg og Middelfart
+- [x] Vurder om fallback mest sandsynligt skyldes inputstørrelse, outputtrunkering eller JSON-parse-fejl
+
+## Report fallback root-cause analysis review
+
+- `generate_report()` falder tilbage ved enhver exception i LLM-kaldet eller JSON-parsingen; den præcise fejl gemmes kun i runtime-loggen og ikke i rapport-JSON
+- Aalborg-rapporten bruger en ekstremt stor prompt: ca. `178527` tegn, dvs. omtrent `44631` input tokens (`servitutter_json` alene ca. `31518` tokens og `evidence_text` yderligere ca. `12519` tokens)
+- Middelfart-rapporten er markant mindre, men stadig stor: ca. `59911` tegn, dvs. omtrent `14977` input tokens
+- Rapport-inputtet er redundant: hele `Servitut.model_dump()` sendes til modellen, inklusive nested `evidence` og øvrige felter, og derefter sendes et separat `evidence_text` oveni med top-chunks for samme servitutter
+- Estimeret outputstørrelse ser ikke ud til at være den primære flaskehals (`~5833` tokens for Aalborg-lignende JSON og `~2207` tokens for Middelfart-lignende JSON, begge under `max_tokens=8192`)
+- Den mest sandsynlige root cause er derfor ikke outputtrunkering men at rapport-prompten er for tung og redundant, hvilket gør DeepSeek-reportkaldet skrøbeligt og øger sandsynligheden for et ikke-parsebart JSON-svar; på Aalborg er inputstørrelsen i sig selv sandsynligvis stor nok til at være hovedårsagen

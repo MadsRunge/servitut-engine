@@ -30,13 +30,9 @@ VIGTIGT:
 - Hvis applies_to_target_matrikel = true → scope = "Ja"
 - Hvis applies_to_target_matrikel = false → scope = "Nej"
 - Hvis applies_to_target_matrikel = null og applies_to_matrikler er tom → scope = "Måske"
-- OBS — historiske akter: applies_to_matrikler kan indeholde GAMLE matrikelnumre (fx "1a", "1m") der ikke matcher ejendommens nuværende matrikler. Brug evidensteksten og servituttens indhold til at vurdere om det sandsynligvis vedrører projektområdet. Anfør din vurdering i scope_detail.
+- OBS — historiske akter: applies_to_matrikler kan indeholde GAMLE matrikelnumre (fx "1a", "1m") der ikke matcher ejendommens nuværende matrikler. Brug summary og title til at vurdere om det sandsynligvis vedrører projektområdet. Anfør din vurdering i scope_detail.
 - Returner KUN valid JSON-objektet. Ingen tekst før eller efter JSON-objektet.
 
 --- SERVITUTTER START ---
 {servitutter_json}
 --- SERVITUTTER SLUT ---
-
---- EVIDENS-UDDRAG START ---
-{evidence_text}
---- EVIDENS-UDDRAG SLUT ---

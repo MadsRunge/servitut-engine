@@ -9,7 +9,7 @@ from app.models.report import Report, ReportEntry
 from app.models.servitut import Servitut
 from app.services.llm_service import generate_text
 from app.services.matrikel_service import filter_servitutter_for_target, resolve_matching_target_matrikler
-from app.services.rag_service import find_relevant_chunks
+from app.services import storage_service
 from app.utils.ids import generate_report_id
 
 logger = get_logger(__name__)
@@ -25,15 +25,6 @@ def _load_prompt() -> str:
     prompt_path = settings.prompts_path / "generate_report.txt"
     return prompt_path.read_text(encoding="utf-8")
 
-
-def _build_evidence_text(servitutter: List[Servitut], all_chunks: List[Chunk]) -> str:
-    parts = []
-    for srv in servitutter:
-        top_chunks = find_relevant_chunks(srv, all_chunks, top_k=3)
-        if top_chunks:
-            chunk_texts = "\n".join(f"  [Side {c.page}]: {c.text[:400]}" for c in top_chunks)
-            parts.append(f"Servitut '{srv.title}':\n{chunk_texts}")
-    return "\n\n".join(parts)
 
 
 def _resolve_report_model() -> str | None:
@@ -169,16 +160,22 @@ def generate_report(
         available_matrikler,
     )
 
+    _REPORT_FIELDS = {
+        "servitut_id", "date_reference", "title", "summary", "beneficiary",
+        "disposition_type", "legal_type", "action_note", "byggeri_markering",
+        "applies_to_target_matrikel", "applies_to_matrikler", "registered_at",
+    }
     servitutter_json = json.dumps(
-        [s.model_dump() for s in filtered_servitutter],
+        [
+            {k: v for k, v in s.model_dump(mode="json").items() if k in _REPORT_FIELDS}
+            for s in filtered_servitutter
+        ],
         ensure_ascii=False,
         indent=2,
-        default=str,
     )
-    evidence_text = _build_evidence_text(filtered_servitutter, all_chunks)
 
     prompt = prompt_template.replace("{servitutter_json}", servitutter_json)
-    prompt = prompt.replace("{evidence_text}", evidence_text)
+    prompt = prompt.replace("{evidence_text}", "")
     prompt = prompt.replace(
         "{target_matrikler_json}",
         json.dumps(target_matrikler, ensure_ascii=False),
@@ -191,6 +188,23 @@ def generate_report(
         "{as_of_date}",
         as_of_date.isoformat() if as_of_date else "ingen datoafgrænsning",
     )
+
+    attest_doc_ids = {
+        d.document_id
+        for d in storage_service.list_documents(case_id)
+        if d.document_type == "tinglysningsattest"
+    }
+
+    # Build lookup dicts for enrichment (used in both LLM and fallback paths)
+    srv_by_id = {s.servitut_id: s for s in filtered_servitutter}
+    srv_by_date = {s.date_reference: s for s in filtered_servitutter}
+
+    def _lookup_srv(servitut_id: str, date_reference: Optional[str]) -> Optional[Servitut]:
+        return srv_by_id.get(servitut_id) or srv_by_date.get(date_reference)
+
+    def _akt_raw_text(srv: Servitut) -> Optional[str]:
+        akt_ev = [ev for ev in (srv.evidence or []) if ev.document_id not in attest_doc_ids]
+        return akt_ev[0].text_excerpt[:500] if akt_ev else None
 
     markdown_content: Optional[str] = None
     entries: List[ReportEntry] = []
@@ -205,7 +219,19 @@ def generate_report(
         ).strip()
         data = _extract_json_object(response_text)
         notes = data.get("notes")
-        entries = _build_report_entries(data.get("entries", []))
+        raw_entries = _build_report_entries(data.get("entries", []))
+        entries = []
+        for entry in raw_entries:
+            srv = _lookup_srv(entry.servitut_id, entry.date_reference)
+            updates = {}
+            if srv:
+                if not entry.description or entry.description.strip() in ("—", "-", ""):
+                    if srv.title:
+                        updates["description"] = f"Ingen aktindhold tilgængeligt — {srv.title}"
+                raw_text = _akt_raw_text(srv)
+                if raw_text:
+                    updates["raw_text"] = raw_text
+            entries.append(entry.model_copy(update=updates) if updates else entry)
     except Exception as e:
         logger.error(f"Report generation error: {e}")
         # Fallback: build basic entries from servitutter
@@ -221,6 +247,7 @@ def generate_report(
                 ReportEntry(
                     nr=i,
                     date_reference=srv.date_reference,
+                    raw_text=_akt_raw_text(srv),
                     description=srv.summary,
                     beneficiary=srv.beneficiary,
                     disposition=srv.disposition_type,

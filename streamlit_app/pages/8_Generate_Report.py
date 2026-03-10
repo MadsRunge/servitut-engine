@@ -193,11 +193,13 @@ def _build_html_report(report, case) -> str:
         scope_text = entry.scope_detail or scope
         relevant_class = {"Ja": "relevant-row", "Måske": "maybe-row", "Nej": ""}.get(scope, "")
         relevant_badge_class = {"Ja": "badge badge-relevant", "Måske": "badge badge-maybe", "Nej": "badge"}.get(scope, "badge")
+        raw_text_html = f'<span style="font-size:12px;color:#665c54;font-style:italic">{html.escape(entry.raw_text)}</span>' if entry.raw_text else "—"
         rows.append(
             f"""
             <tr class="{relevant_class}">
               <td>{entry.nr}</td>
               <td>{html.escape(entry.date_reference or "—")}</td>
+              <td>{raw_text_html}</td>
               <td>{html.escape(entry.description or "—")}</td>
               <td>{html.escape(entry.beneficiary or "—")}</td>
               <td>{html.escape(entry.disposition or "—")}</td>
@@ -216,7 +218,8 @@ def _build_html_report(report, case) -> str:
           <tr>
             <th>Nr.</th>
             <th>Dato/løbenummer</th>
-            <th>Beskrivelse</th>
+            <th>Servituttens tekst</th>
+            <th>Servituttens indhold</th>
             <th>Påtaleberettiget</th>
             <th>Rådighed/tilstand</th>
             <th>Offentlig/privatretlig</th>
@@ -225,7 +228,7 @@ def _build_html_report(report, case) -> str:
           </tr>
         </thead>
         <tbody>
-          {''.join(rows) if rows else '<tr><td colspan="8">Ingen rapportposter</td></tr>'}
+          {''.join(rows) if rows else '<tr><td colspan="9">Ingen rapportposter</td></tr>'}
         </tbody>
       </table>
     </section>
@@ -371,17 +374,22 @@ def _build_html_report(report, case) -> str:
             margin-bottom: 10px;
             border: 1px solid var(--line);
           }}
-          .legend-swatch.neutral {{
+          .legend-swatch.nej {{
             background: #f4eee6;
             color: var(--muted);
           }}
-          .legend-swatch.warn {{
+          .legend-swatch.maske {{
             background: var(--warm-soft);
             color: var(--accent-warm);
           }}
-          .legend-swatch.alert {{
-            background: var(--danger-soft);
-            color: #b84c3d;
+          .legend-swatch.ja {{
+            background: var(--accent-soft);
+            color: var(--accent);
+          }}
+          .badge-maybe {{
+            background: var(--warm-soft);
+            border-color: rgba(201, 111, 45, 0.25);
+            color: var(--accent-warm);
           }}
           .notes {{
             margin-bottom: 28px;
@@ -530,15 +538,15 @@ def _build_html_report(report, case) -> str:
                 </div>
                 <div class="summary-card">
                   <div class="summary-number">{relevant_count}</div>
-                  <div class="summary-copy">Projektrelevante poster</div>
+                  <div class="summary-copy">Ja — gælder projektområdet</div>
+                </div>
+                <div class="summary-card">
+                  <div class="summary-number">{maybe_count}</div>
+                  <div class="summary-copy">Måske — uafklaret scope</div>
                 </div>
                 <div class="summary-card">
                   <div class="summary-number">{non_relevant_count}</div>
-                  <div class="summary-copy">Øvrige poster</div>
-                </div>
-                <div class="summary-card">
-                  <div class="summary-number">{report.created_at:%d.%m.%Y}</div>
-                  <div class="summary-copy">Rapportdato</div>
+                  <div class="summary-copy">Nej — gælder ikke</div>
                 </div>
               </section>
 
@@ -554,16 +562,16 @@ def _build_html_report(report, case) -> str:
                 <h2>Vurderingsniveauer</h2>
                 <div class="legend">
                   <div class="legend-card">
-                    <div class="legend-swatch neutral">Neutral</div>
-                    <div>Servitutten vurderes ikke at påvirke projektområdet direkte og kræver normalt ingen yderligere handling.</div>
+                    <div class="legend-swatch nej">Nej</div>
+                    <div>Servitutten vurderes ikke at gælde projektområdet og kræver normalt ingen yderligere handling.</div>
                   </div>
                   <div class="legend-card">
-                    <div class="legend-swatch warn">Afklar</div>
-                    <div>Servitutten bør vurderes nærmere i projekteringen eller den juridiske afklaring, før den kan afskrives.</div>
+                    <div class="legend-swatch maske">Måske</div>
+                    <div>Servituttens scope er uafklaret. Bør undersøges nærmere — enten mangler aktindhold eller matrikelreferencen er tvetydig.</div>
                   </div>
                   <div class="legend-card">
-                    <div class="legend-swatch alert">Kritisk</div>
-                    <div>Servitutten har tydelig betydning for placering, håndtering eller byggeforudsætninger og skal iagttages aktivt.</div>
+                    <div class="legend-swatch ja">Ja</div>
+                    <div>Servitutten gælder bekræftet projektområdet og skal iagttages aktivt ved placering og projektering.</div>
                   </div>
                 </div>
               </section>
@@ -632,26 +640,34 @@ for report in reports:
             indent=2,
         )
         export_col1, export_col2, export_col3 = st.columns(3)
+        matrikel_slug = "-".join(report.target_matrikler) if report.target_matrikler else "ukendt"
+        date_slug = report.created_at.strftime("%Y-%m-%d")
+        case_slug = case.name.replace(" ", "_").replace("/", "-")[:40]
+        base_name = f"servitutredegoerelse_{case_slug}_{matrikel_slug}_{date_slug}"
+
         export_col1.download_button(
             "Download rapport (.md)",
             data=markdown_export,
-            file_name=f"{report.report_id}.md",
+            file_name=f"{base_name}.md",
             mime="text/markdown",
             width="stretch",
+            key=f"download_md_{report.report_id}",
         )
         export_col2.download_button(
             "Download rapport (.html)",
             data=html_export,
-            file_name=f"{report.report_id}.html",
+            file_name=f"{base_name}.html",
             mime="text/html",
             width="stretch",
+            key=f"download_html_{report.report_id}",
         )
         export_col3.download_button(
             "Download rapportdata (.json)",
             data=json_export,
-            file_name=f"{report.report_id}.json",
+            file_name=f"{base_name}.json",
             mime="application/json",
             width="stretch",
+            key=f"download_json_{report.report_id}",
         )
 
         tab_cards, tab_table = st.tabs(["Læsbar visning", "Rapporttabel"])
