@@ -32,3 +32,10 @@ storage/cases/*/
 .idea/
 *.swp
 *.swo
+
+# PDFs: keep only servitutredegørelser and tinglysningsattester in Git
+*.pdf
+!*Servitutredegørelse*.pdf
+!*servitutredegørelse*.pdf
+!*Tinglysningsattest*.pdf
+!*tinglysningsattest*.pdf
