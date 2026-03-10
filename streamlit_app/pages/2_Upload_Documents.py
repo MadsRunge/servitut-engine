@@ -8,6 +8,7 @@ import streamlit as st
 
 from app.models.document import Document
 from app.services import case_service, storage_service
+from app.services.case_service import remove_document_from_case
 from app.utils.ids import generate_doc_id
 from streamlit_app.ui import (
     parse_status_label,
@@ -60,9 +61,9 @@ existing_attest = [d for d in existing_docs if d.document_type == "tinglysningsa
 
 if existing_attest:
     st.info(f"Tinglysningsattest allerede uploadet: **{existing_attest[0].filename}** (`{existing_attest[0].document_id}`)")
-    if st.checkbox("Erstat med ny tinglysningsattest"):
+    with st.expander("🔄 Upload ny version"):
         attest_file = st.file_uploader("Upload tinglysningsattest (PDF)", type=["pdf"], key="attest_upload")
-        if attest_file and st.button("Upload tinglysningsattest", key="attest_btn"):
+        if attest_file and st.button("Upload ny tinglysningsattest", key="attest_btn"):
             doc_id = _save_uploaded_file(attest_file, case.case_id, "tinglysningsattest")
             st.success(f"Uploadet: **{attest_file.name}** (`{doc_id}`)")
             st.rerun()
@@ -94,11 +95,16 @@ render_section("Dokumentbibliotek", "Oversigt over filer i den aktive sag og der
 docs = storage_service.list_documents(case.case_id)
 if docs:
     for doc in docs:
-        type_badge = "📋 Tinglysningsattest" if doc.document_type == "tinglysningsattest" else "📄 Akt"
-        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+        is_attest = doc.document_type == "tinglysningsattest"
+        type_badge = "📋 Tinglysningsattest" if is_attest else "📄 Akt"
+        col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 0.5])
         col1.markdown(f"**{doc.filename}**  \n`{doc.document_id}`")
         col2.caption(type_badge)
         col3.metric("Status", parse_status_label(doc.parse_status))
         col4.metric("Sider", str(doc.page_count))
+        if col5.button("🗑", key=f"del_{doc.document_id}", help="Slet dokument"):
+            remove_document_from_case(case.case_id, doc.document_id)
+            st.toast(f"{doc.filename} slettet")
+            st.rerun()
 else:
     render_empty_state("Ingen dokumenter endnu", "Upload tinglysningsattest og akter for at fortsætte til OCR.")

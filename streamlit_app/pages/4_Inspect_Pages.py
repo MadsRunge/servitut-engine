@@ -49,6 +49,22 @@ col1.metric("Gode sider", str(good_pages))
 col2.metric("Lav confidence", str(low_pages))
 col3.metric("Blanke sider", str(blank_pages))
 
+filter_val = st.radio(
+    "Filtrer sider",
+    ["Alle", "God (≥0.7)", "Lav confidence", "Blanke"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+pages = {
+    "Alle": pages,
+    "God (≥0.7)": [p for p in pages if p.confidence >= 0.7],
+    "Lav confidence": [p for p in pages if 0.0 < p.confidence < 0.7],
+    "Blanke": [p for p in pages if p.confidence == 0.0],
+}[filter_val]
+if not pages:
+    st.info(f"Ingen sider matcher filteret '{filter_val}'.")
+    st.stop()
+
 # Indlæs original PDF til billedrendering
 pdf_path = storage_service.get_document_pdf_path(case.case_id, doc.document_id)
 

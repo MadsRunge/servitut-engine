@@ -69,6 +69,18 @@ def delete_case(case_id: str) -> bool:
     return False
 
 
+def delete_document(case_id: str, doc_id: str) -> None:
+    import shutil
+    shutil.rmtree(_doc_dir(case_id, doc_id), ignore_errors=True)
+    ocr_path = _case_dir(case_id) / "ocr" / f"{doc_id}_pages.json"
+    chunks_path = _case_dir(case_id) / "chunks" / f"{doc_id}_chunks.json"
+    images_dir = _case_dir(case_id) / "page_images" / doc_id
+    for p in [ocr_path, chunks_path]:
+        p.unlink(missing_ok=True)
+    shutil.rmtree(images_dir, ignore_errors=True)
+    logger.info(f"Deleted document {doc_id} from case {case_id}")
+
+
 # --- Document ---
 
 def save_document(doc: Document) -> None:

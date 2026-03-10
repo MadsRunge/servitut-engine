@@ -156,6 +156,23 @@ if docs_to_process:
 else:
     st.caption("Alle dokumenter er allerede OCR-behandlet.")
 
+failed_docs = [doc for doc in docs if doc.parse_status == "error"]
+if failed_docs:
+    st.divider()
+    if st.button(
+        f"🔁 Kør OCR igen på {len(failed_docs)} fejlede dokument(er)",
+        type="secondary",
+        use_container_width=False,
+    ):
+        for doc in failed_docs:
+            with st.spinner(f"Kører OCR igen: {doc.filename}…"):
+                ok, message = run_ocr_for_document(case.case_id, doc)
+                if ok:
+                    st.success(f"{doc.filename}: {message}")
+                else:
+                    st.error(f"{doc.filename}: {message}")
+        st.rerun()
+
 for doc in docs:
     with st.expander(f"{doc.filename} · {parse_status_label(doc.parse_status)}", expanded=doc.parse_status != "ocr_done"):
         col1, col2, col3 = st.columns([3, 1, 1])

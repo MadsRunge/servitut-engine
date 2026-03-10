@@ -31,4 +31,4 @@ if submitted:
         col1, col2 = st.columns(2)
         col1.metric("Status", case.status)
         col2.metric("Dokumenter", str(len(case.document_ids)))
-        st.json(case.model_dump(mode="json"), expanded=False)
+        st.page_link("pages/2_Upload_Documents.py", label="Fortsæt til upload →", icon="📎")

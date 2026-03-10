@@ -42,8 +42,7 @@ if not case.matrikler:
     st.stop()
 
 matrikel_labels = {
-    f"{m.matrikelnummer} · {m.landsejerlav or 'Ukendt landsejerlav'}"
-    + (f" · {m.areal_m2} m²" if m.areal_m2 else ""): m.matrikelnummer
+    f"{m.matrikelnummer} · {m.landsejerlav or 'Ukendt landsejerlav'}": m.matrikelnummer
     for m in case.matrikler
 }
 all_options = list(matrikel_labels.keys())
@@ -636,7 +635,7 @@ for report in reports:
             use_container_width=True,
         )
 
-        tab_cards, tab_table = st.tabs(["Laesbar visning", "Ra tabel"])
+        tab_cards, tab_table = st.tabs(["Læsbar visning", "Rapporttabel"])
         with tab_cards:
             if report.servitutter:
                 for entry in report.servitutter:

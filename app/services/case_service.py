@@ -41,6 +41,15 @@ def update_case_status(case_id: str, status: str) -> Optional[Case]:
     return case
 
 
+def remove_document_from_case(case_id: str, doc_id: str) -> None:
+    storage_service.delete_document(case_id, doc_id)
+    case = storage_service.load_case(case_id)
+    if case and doc_id in case.document_ids:
+        case.document_ids.remove(doc_id)
+        storage_service.save_case(case)
+    logger.info(f"Removed document {doc_id} from case {case_id}")
+
+
 def add_document_to_case(case_id: str, doc_id: str) -> Optional[Case]:
     case = storage_service.load_case(case_id)
     if not case:

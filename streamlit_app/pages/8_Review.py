@@ -49,27 +49,46 @@ if not srv:
     st.stop()
 
 render_section("Servitutprofil", "Sammenfatning af det valgte fund før dyk ned i evidenskæden.")
-col1, col2 = st.columns([2, 1])
-with col1:
-    st.subheader(srv.title or "Ukendt titel")
-    st.markdown(f"**Resumé:** {srv.summary or '—'}")
-    st.markdown(f"**Dato/ref:** {srv.date_reference or '—'}")
-    st.markdown(f"**Matrikler:** {', '.join(srv.applies_to_matrikler) if srv.applies_to_matrikler else '—'}")
-    st.markdown(
-        "**Gælder målmatrikel:** "
-        f"{'Ja' if srv.applies_to_target_matrikel else 'Nej' if srv.applies_to_target_matrikel is False else 'Uafklaret'}"
-    )
-    st.markdown(f"**Påtaleberettiget:** {srv.beneficiary or '—'}")
-    st.markdown(f"**Rådighed/tilstand:** {srv.disposition_type or '—'}")
-    st.markdown(f"**Retlig type:** {srv.legal_type or '—'}")
-    st.markdown(f"**Byggerelevant:** {'Ja' if srv.construction_relevance else 'Nej'}")
-    st.markdown(f"**Anbefalet handling:** {srv.action_note or '—'}")
-    st.markdown(f"**Scope-grundlag:** {srv.scope_basis or '—'}")
 
-with col2:
-    st.metric("Confidence", f"{srv.confidence:.2f}")
-    st.caption(f"ID: {srv.servitut_id}")
-    st.caption(f"Kilde-dokument: {srv.source_document}")
+st.subheader(srv.title or "Ukendt titel")
+
+# Resumé som info-boks
+if srv.summary:
+    st.info(srv.summary)
+
+# Nøglemålinger — første række
+m_col1, m_col2, m_col3 = st.columns(3)
+m_col1.metric("Dato / løbenummer", srv.date_reference or "—")
+target_label = "Ja" if srv.applies_to_target_matrikel is True else ("Nej" if srv.applies_to_target_matrikel is False else "Uafklaret")
+m_col2.metric("Gælder målmatrikel", target_label)
+m_col3.metric("Confidence", f"{srv.confidence:.0%}")
+
+st.divider()
+
+# Juridisk blok — to kolonner
+j_col1, j_col2 = st.columns(2)
+j_col1.markdown(f"**Påtaleberettiget**\n\n{srv.beneficiary or '—'}")
+j_col1.markdown(f"**Rådighed / tilstand**\n\n{srv.disposition_type or '—'}")
+j_col2.markdown(f"**Retlig type**\n\n{srv.legal_type or '—'}")
+j_col2.markdown(f"**Anbefalet handling**\n\n{srv.action_note or '—'}")
+
+st.divider()
+
+# Byggerelevans og scope
+MARKERING_BADGE = {
+    "rød": "🔴 Rød — direkte byggerelevans",
+    "orange": "🟠 Orange — kræver stillingtagen",
+    "sort": "⚫ Sort — ingen byggerelevans",
+}
+markering_text = MARKERING_BADGE.get(srv.byggeri_markering or "", "— Ikke vurderet")
+b_col1, b_col2 = st.columns(2)
+b_col1.markdown(f"**Byggemarkering**\n\n{markering_text}")
+if srv.applies_to_matrikler:
+    b_col2.markdown(f"**Gælder matrikler**\n\n{', '.join(srv.applies_to_matrikler)}")
+if srv.scope_basis:
+    st.caption(f"Scope-grundlag: {srv.scope_basis}")
+
+st.caption(f"ID: {srv.servitut_id} · Kilde: {srv.source_document}")
 
 render_section("Evidenskæde", "Hver evidensblok viser excerpt, fuld chunk, OCR-tekst og original side.")
 

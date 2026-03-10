@@ -13,6 +13,7 @@ from streamlit_app.ui import (
     render_case_stats,
     render_empty_state,
     render_section,
+    render_stat_cards,
     select_case,
     setup_page,
 )
@@ -124,18 +125,28 @@ else:
             icon="⚠️",
         )
 
+    # Aggregeret overblik
+    rød_n = sum(1 for s in servitutter if s.byggeri_markering == "rød")
+    orange_n = sum(1 for s in servitutter if s.byggeri_markering == "orange")
+    sort_n = sum(1 for s in servitutter if s.byggeri_markering == "sort")
+    ja_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is True)
+    nej_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is False)
+    uafklaret_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is None)
+    render_stat_cards([
+        ("🔴 Rød", str(rød_n), "Direkte byggerelevans"),
+        ("🟠 Orange", str(orange_n), "Kræver stillingtagen"),
+        ("⚫ Sort", str(sort_n), "Ingen byggerelevans"),
+        ("Gælder matrikel", str(ja_n), "Ja"),
+        ("Uafklaret scope", str(uafklaret_n), "Måske"),
+        ("Gælder ikke", str(nej_n), "Nej"),
+    ])
+
     for srv in servitutter:
         icon, badge_label = MARKERING_BADGE.get(srv.byggeri_markering or "", ("—", "Ikke vurderet"))
         title_text = srv.title or "Ukendt titel"
         unconfirmed_prefix = "⚠️ &nbsp;" if not srv.attest_confirmed else ""
 
         with st.expander(f"{unconfirmed_prefix}{icon} &nbsp; {title_text}", expanded=False):
-            if not srv.attest_confirmed:
-                st.warning(
-                    "Ikke bekræftet i tinglysningsattesten — fundet i aktdokument. Verificér manuelt.",
-                    icon="⚠️",
-                )
-
             # Første række: dato og matrikel-scope
             col_a, col_b, col_c = st.columns([2, 1, 1])
             col_a.markdown(f"**Løbenummer / dato**\n\n{srv.date_reference or '—'}")
