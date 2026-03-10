@@ -1,9 +1,11 @@
 from unittest.mock import patch
+from datetime import date
 
 from app.core.config import settings
 from app.models.chunk import Chunk
 from app.models.servitut import Servitut
 from app.services.extraction import llm_extractor
+from app.services.extraction.merger import _enrich_canonical
 from app.services import extraction_service
 
 
@@ -235,3 +237,96 @@ def test_extract_document_servitutter_uses_larger_token_budget_for_attest():
         )
 
     assert mock_generate.call_args.kwargs["max_tokens"] == 8192
+
+
+def test_extract_document_servitutter_can_use_separate_extraction_provider_and_model(monkeypatch):
+    chunk = make_chunk("doc-a")
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "MODEL", "deepseek-chat")
+    monkeypatch.setattr(settings, "EXTRACTION_LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "EXTRACTION_MODEL", "claude-sonnet-4-6")
+
+    with patch(
+        "app.services.extraction.llm_extractor.generate_text",
+        return_value="[]",
+    ) as mock_generate:
+        extraction_service._extract_document_servitutter(
+            "doc-a",
+            [chunk],
+            "case-test",
+            "Prompt {chunks_text}",
+            "akt",
+        )
+
+    assert mock_generate.call_args.kwargs["provider"] == "anthropic"
+    assert mock_generate.call_args.kwargs["default_model"] == "claude-sonnet-4-6"
+
+
+def test_extract_document_servitutter_parses_structured_scope_fields():
+    chunk = make_chunk("doc-a")
+
+    with patch(
+        "app.services.extraction.llm_extractor.generate_text",
+        return_value=(
+            '[{'
+            '"title":"Test",'
+            '"date_reference":"01.01.2000-1-1",'
+            '"registered_at":"2000-01-01",'
+            '"applies_to_matrikler":["0001o"],'
+            '"raw_matrikel_references":["1o","1v"],'
+            '"raw_scope_text":"Vedr. matr.nr. 1o og 1v",'
+            '"scope_source":"akt",'
+            '"scope_basis":"Eksplicit nævnt i akten",'
+            '"scope_confidence":0.9,'
+            '"confidence":0.8'
+            '}]'
+        ),
+    ):
+        result = extraction_service._extract_document_servitutter(
+            "doc-a",
+            [chunk],
+            "case-test",
+            "Prompt {chunks_text}",
+            "akt",
+        )
+
+    assert len(result) == 1
+    assert result[0].registered_at == date(2000, 1, 1)
+    assert result[0].raw_matrikel_references == ["1o", "1v"]
+    assert result[0].raw_scope_text == "Vedr. matr.nr. 1o og 1v"
+    assert result[0].scope_source == "akt"
+
+
+def test_enrich_canonical_preserves_attest_scope_over_akt_scope():
+    canonical = Servitut(
+        servitut_id="srv-canonical",
+        case_id="case-test",
+        source_document="doc-attest",
+        date_reference="01.01.2000-1-1",
+        applies_to_matrikler=["0001o", "0001v"],
+        raw_matrikel_references=["1o", "1v"],
+        raw_scope_text="Vedr. matr.nr. 1o og 1v",
+        scope_source="attest",
+        registered_at=date(2000, 1, 1),
+        confidence=0.6,
+    )
+    akt = Servitut(
+        servitut_id="srv-akt",
+        case_id="case-test",
+        source_document="doc-akt",
+        date_reference="01.01.2000-1-1",
+        applies_to_matrikler=["0022a"],
+        raw_matrikel_references=["22a"],
+        raw_scope_text="Vedr. matr.nr. 22a",
+        scope_source="akt",
+        summary="Detaljer fra akt",
+        confidence=0.9,
+    )
+
+    merged = _enrich_canonical(canonical, akt)
+
+    assert merged.summary == "Detaljer fra akt"
+    assert merged.applies_to_matrikler == ["0001o", "0001v"]
+    assert merged.raw_matrikel_references == ["1o", "1v"]
+    assert merged.raw_scope_text == "Vedr. matr.nr. 1o og 1v"
+    assert merged.scope_source == "attest"

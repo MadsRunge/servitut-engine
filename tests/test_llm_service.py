@@ -24,7 +24,7 @@ def test_generate_text_uses_anthropic_provider(monkeypatch):
     with patch("app.services.llm_service._generate_with_anthropic", return_value="hej") as mock_fn:
         assert llm_service.generate_text("prompt", max_tokens=123) == "hej"
 
-    mock_fn.assert_called_once_with("prompt", 123, model=None)
+    mock_fn.assert_called_once_with("prompt", 123, model=None, default_model=None)
 
 
 def test_generate_text_uses_deepseek_provider(monkeypatch):
@@ -33,7 +33,7 @@ def test_generate_text_uses_deepseek_provider(monkeypatch):
     with patch("app.services.llm_service._generate_with_deepseek", return_value="svar") as mock_fn:
         assert llm_service.generate_text("prompt", max_tokens=321) == "svar"
 
-    mock_fn.assert_called_once_with("prompt", 321, model=None)
+    mock_fn.assert_called_once_with("prompt", 321, model=None, default_model=None)
 
 
 def test_generate_text_passes_model_override(monkeypatch):
@@ -42,7 +42,39 @@ def test_generate_text_passes_model_override(monkeypatch):
     with patch("app.services.llm_service._generate_with_deepseek", return_value="svar") as mock_fn:
         assert llm_service.generate_text("prompt", max_tokens=321, model="deepseek-reasoner") == "svar"
 
-    mock_fn.assert_called_once_with("prompt", 321, model="deepseek-reasoner")
+    mock_fn.assert_called_once_with(
+        "prompt",
+        321,
+        model="deepseek-reasoner",
+        default_model=None,
+    )
+
+
+def test_generate_text_passes_provider_override():
+    with patch("app.services.llm_service._generate_with_deepseek", return_value="svar") as mock_fn:
+        assert llm_service.generate_text("prompt", max_tokens=321, provider="deepseek") == "svar"
+
+    mock_fn.assert_called_once_with("prompt", 321, model=None, default_model=None)
+
+
+def test_generate_text_passes_default_model_override():
+    with patch("app.services.llm_service._generate_with_anthropic", return_value="hej") as mock_fn:
+        assert (
+            llm_service.generate_text(
+                "prompt",
+                max_tokens=123,
+                provider="anthropic",
+                default_model="claude-sonnet-4-6",
+            )
+            == "hej"
+        )
+
+    mock_fn.assert_called_once_with(
+        "prompt",
+        123,
+        model=None,
+        default_model="claude-sonnet-4-6",
+    )
 
 
 def test_generate_text_rejects_unknown_provider(monkeypatch):
@@ -95,6 +127,37 @@ def test_generate_with_deepseek_uses_model_override():
     with patch("app.services.llm_service.request.urlopen", return_value=mock_response) as mock_urlopen:
         assert (
             llm_service._generate_with_deepseek("hej", max_tokens=42, model="deepseek-reasoner")
+            == "DeepSeek svar"
+        )
+
+    request_obj = mock_urlopen.call_args.args[0]
+    payload = json.loads(request_obj.data.decode("utf-8"))
+    assert payload["model"] == "deepseek-reasoner"
+
+
+def test_generate_with_deepseek_uses_default_model_override():
+    response_body = json.dumps(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "DeepSeek svar",
+                    }
+                }
+            ]
+        }
+    ).encode("utf-8")
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = response_body
+    mock_response.__exit__.return_value = None
+
+    with patch("app.services.llm_service.request.urlopen", return_value=mock_response) as mock_urlopen:
+        assert (
+            llm_service._generate_with_deepseek(
+                "hej",
+                max_tokens=42,
+                default_model="deepseek-reasoner",
+            )
             == "DeepSeek svar"
         )
 

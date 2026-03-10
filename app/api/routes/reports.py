@@ -1,6 +1,7 @@
+from datetime import date
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.report import Report
 from app.services import case_service, matrikel_service, storage_service
@@ -10,7 +11,7 @@ router = APIRouter()
 
 
 @router.post("/{case_id}/reports", response_model=Report, status_code=201)
-def create_report(case_id: str):
+def create_report(case_id: str, as_of_date: date | None = Query(default=None)):
     case = case_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -29,6 +30,7 @@ def create_report(case_id: str):
             case_id,
             target_matrikler=target,
             available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
+            as_of_date=as_of_date,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

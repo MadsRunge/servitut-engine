@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ class Report(BaseModel):
     report_id: str
     case_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    as_of_date: Optional[date] = None
     target_matrikler: List[str] = Field(default_factory=list)
     available_matrikler: List[str] = Field(default_factory=list)
     servitutter: List[ReportEntry] = Field(default_factory=list)

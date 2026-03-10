@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from datetime import date
 
 import pytest
 
@@ -104,12 +105,14 @@ def test_report_uses_deepseek_reasoner_by_default(monkeypatch):
     servitutter = [make_mock_servitut(1)]
     chunks = make_mock_chunks()
     monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "REPORT_LLM_PROVIDER", "")
     monkeypatch.setattr(settings, "REPORT_MODEL", "")
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
         generate_report(servitutter, chunks, "case-test")
 
     _, kwargs = mock_generate_text.call_args
+    assert kwargs["provider"] is None
     assert kwargs["model"] == "deepseek-reasoner"
 
 
@@ -117,13 +120,31 @@ def test_report_uses_explicit_report_model_override(monkeypatch):
     servitutter = [make_mock_servitut(1)]
     chunks = make_mock_chunks()
     monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "REPORT_LLM_PROVIDER", "")
     monkeypatch.setattr(settings, "REPORT_MODEL", "deepseek-chat")
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
         generate_report(servitutter, chunks, "case-test")
 
     _, kwargs = mock_generate_text.call_args
+    assert kwargs["provider"] is None
     assert kwargs["model"] == "deepseek-chat"
+
+
+def test_report_can_use_separate_provider_and_model(monkeypatch):
+    servitutter = [make_mock_servitut(1)]
+    chunks = make_mock_chunks()
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr(settings, "MODEL", "claude-sonnet-4-6")
+    monkeypatch.setattr(settings, "REPORT_LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "REPORT_MODEL", "deepseek-reasoner")
+
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
+        generate_report(servitutter, chunks, "case-test")
+
+    _, kwargs = mock_generate_text.call_args
+    assert kwargs["provider"] == "deepseek"
+    assert kwargs["model"] == "deepseek-reasoner"
 
 
 def test_report_accepts_json_wrapped_in_code_fence():
@@ -162,6 +183,28 @@ def test_report_includes_all_servitutter_with_scope_annotation():
     assert "Servitut for anden matrikel" in prompt
 
 
+def test_report_filters_future_servitutter_when_as_of_date_is_set():
+    historical = make_mock_servitut(1)
+    historical.title = "Historisk servitut"
+    historical.registered_at = date(2022, 12, 20)
+    future = make_mock_servitut(2)
+    future.title = "Ny servitut"
+    future.registered_at = date(2024, 1, 16)
+
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
+        report = generate_report(
+            [historical, future],
+            make_mock_chunks(),
+            "case-test",
+            as_of_date=date(2022, 12, 20),
+        )
+
+    prompt = mock_generate_text.call_args[0][0]
+    assert "Historisk servitut" in prompt
+    assert "Ny servitut" not in prompt
+    assert report.as_of_date == date(2022, 12, 20)
+
+
 def test_report_entry_model():
     entry = ReportEntry(
         nr=1,
@@ -182,6 +225,7 @@ def test_report_model_serialization():
     report = Report(
         report_id="rep-test1234",
         case_id="case-test",
+        as_of_date=date(2022, 12, 20),
         target_matrikler=["1o", "1v"],
         servitutter=[],
         notes="En note",
@@ -190,7 +234,9 @@ def test_report_model_serialization():
     data = report.model_dump()
     assert data["report_id"] == "rep-test1234"
     assert data["notes"] == "En note"
+    assert data["as_of_date"] == date(2022, 12, 20)
     assert data["target_matrikler"] == ["1o", "1v"]
     report2 = Report(**data)
     assert report2.markdown_content == "# Tabel\n..."
+    assert report2.as_of_date == date(2022, 12, 20)
     assert report2.target_matrikler == ["1o", "1v"]

@@ -1,3 +1,4 @@
+from datetime import date
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,7 @@ class Servitut(BaseModel):
     source_document: str
     priority: int = 0
     date_reference: Optional[str] = None
+    registered_at: Optional[date] = None
     akt_nr: Optional[str] = None
     title: Optional[str] = None
     summary: Optional[str] = None
@@ -26,7 +28,10 @@ class Servitut(BaseModel):
     byggeri_markering: Optional[str] = None  # sort | orange | rød
     action_note: Optional[str] = None
     applies_to_matrikler: List[str] = Field(default_factory=list)
+    raw_matrikel_references: List[str] = Field(default_factory=list)
     applies_to_target_matrikel: Optional[bool] = None
+    raw_scope_text: Optional[str] = None
+    scope_source: Optional[str] = None  # attest | akt | derived
     scope_basis: Optional[str] = None
     scope_confidence: Optional[float] = None
     confidence: float = 0.0

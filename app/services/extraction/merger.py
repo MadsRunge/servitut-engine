@@ -9,10 +9,18 @@ logger = get_logger(__name__)
 
 def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
     """Berig canonical servitut med detaljer fra akt."""
+    canonical_has_scope = any(
+        [
+            canonical.applies_to_matrikler,
+            canonical.raw_matrikel_references,
+            canonical.raw_scope_text,
+        ]
+    )
     updates: dict = {
         "confidence": max(canonical.confidence, akt_srv.confidence),
         "evidence": canonical.evidence + akt_srv.evidence,
         "source_document": akt_srv.source_document,
+        "registered_at": canonical.registered_at or akt_srv.registered_at,
     }
 
     if akt_srv.akt_nr:
@@ -31,16 +39,25 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
         updates["byggeri_markering"] = akt_srv.byggeri_markering
     if akt_srv.construction_relevance:
         updates["construction_relevance"] = True
-    # Attest-scope (canonical.applies_to_matrikler) er ground truth — overskriv ikke.
-    # Brug kun akt-LLM's scope hvis attesten ikke har angivet noget.
-    if akt_srv.applies_to_matrikler and not canonical.applies_to_matrikler:
-        updates["applies_to_matrikler"] = akt_srv.applies_to_matrikler
+    # Attest-scope er source of truth. Akt må kun udfylde scope hvis canonical mangler
+    # eksplicit scope-evidens.
+    if not canonical_has_scope:
+        if akt_srv.applies_to_matrikler:
+            updates["applies_to_matrikler"] = akt_srv.applies_to_matrikler
+        if akt_srv.raw_matrikel_references:
+            updates["raw_matrikel_references"] = akt_srv.raw_matrikel_references
+        if akt_srv.raw_scope_text:
+            updates["raw_scope_text"] = akt_srv.raw_scope_text
+        if akt_srv.scope_source:
+            updates["scope_source"] = akt_srv.scope_source
         if akt_srv.applies_to_target_matrikel is not None:
             updates["applies_to_target_matrikel"] = akt_srv.applies_to_target_matrikel
         if akt_srv.scope_basis:
             updates["scope_basis"] = akt_srv.scope_basis
         if akt_srv.scope_confidence is not None:
             updates["scope_confidence"] = akt_srv.scope_confidence
+    elif not canonical.scope_source:
+        updates["scope_source"] = "attest"
 
     return canonical.model_copy(update=updates)
 

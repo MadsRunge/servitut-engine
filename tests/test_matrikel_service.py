@@ -78,6 +78,35 @@ def test_resolve_target_matrikel_scope_multi_matrikel():
     assert matrikel_service.resolve_target_matrikel_scope([], ["1o", "1v"]) is None
 
 
+def test_resolve_target_matrikel_scope_normalizes_zero_padded_values():
+    assert matrikel_service.resolve_target_matrikel_scope(["69f"], ["0069f"]) is True
+    assert (
+        matrikel_service.resolve_target_matrikel_scope(
+            ["38b"],
+            ["0001o", "0001v"],
+            available_matrikler=["0038b", "0001o", "0001v"],
+        )
+        is False
+    )
+    assert (
+        matrikel_service.resolve_target_matrikel_scope(
+            ["22a"],
+            ["0001o", "0001v"],
+            available_matrikler=["0022a", "0001o", "0001v"],
+        )
+        is False
+    )
+
+
+def test_resolve_matching_target_matrikler_preserves_target_format():
+    matches = matrikel_service.resolve_matching_target_matrikler(
+        ["1o", "1v"],
+        ["0001o", "0001v"],
+    )
+
+    assert matches == ["0001o", "0001v"]
+
+
 def test_filter_servitutter_for_target_accepts_single_target_string():
     servitutter = [
         Servitut(
@@ -91,6 +120,26 @@ def test_filter_servitutter_for_target_accepts_single_target_string():
 
     assert len(filtered) == 1
     assert filtered[0].applies_to_target_matrikel is True
+
+
+def test_update_target_matrikel_accepts_unpadded_match(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.STORAGE_DIR", str(tmp_path))
+    (tmp_path / "cases").mkdir()
+
+    case = Case(
+        case_id="case-test",
+        name="Test sag",
+        matrikler=[
+            {"matrikelnummer": "0001o", "landsejerlav": "Test By"},
+            {"matrikelnummer": "0001v", "landsejerlav": "Test By"},
+        ],
+    )
+    storage_service.save_case(case)
+
+    updated = matrikel_service.update_target_matrikel("case-test", "1o")
+
+    assert updated is not None
+    assert updated.target_matrikel == "0001o"
 
 
 def test_list_documents_is_metadata_only_by_default(tmp_path, monkeypatch):

@@ -1,6 +1,6 @@
 import json
 import pytest
-from datetime import datetime
+from datetime import date, datetime
 
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
@@ -47,6 +47,7 @@ def test_servitut_model_validates_correctly():
         case_id="case-xyz",
         source_document="doc-abc",
         date_reference="14.09.1903",
+        registered_at=date(1903, 9, 14),
         title="Test servitut",
         summary="En test servitut",
         beneficiary="Kommunen",
@@ -54,6 +55,9 @@ def test_servitut_model_validates_correctly():
         legal_type="offentlig",
         construction_relevance=True,
         action_note="Ingen handling",
+        raw_matrikel_references=["1o", "1v"],
+        raw_scope_text="Vedr. matr.nr. 1o og 1v",
+        scope_source="attest",
         confidence=0.9,
         evidence=[],
         flags=[],
@@ -61,6 +65,8 @@ def test_servitut_model_validates_correctly():
     assert srv.servitut_id == "srv-abc12345"
     assert srv.construction_relevance is True
     assert srv.confidence == 0.9
+    assert srv.registered_at == date(1903, 9, 14)
+    assert srv.scope_source == "attest"
 
 
 def test_servitut_model_defaults():
@@ -73,6 +79,8 @@ def test_servitut_model_defaults():
     assert srv.construction_relevance is False
     assert srv.evidence == []
     assert srv.flags == []
+    assert srv.raw_matrikel_references == []
+    assert srv.registered_at is None
 
 
 def test_evidence_model():
@@ -107,11 +115,15 @@ def test_servitut_serialization():
         case_id="case-test",
         source_document="doc-test",
         title="Test",
+        registered_at=date(2022, 12, 20),
+        raw_scope_text="Vedr. matr.nr. 1o",
         confidence=0.75,
     )
     data = srv.model_dump()
     assert data["servitut_id"] == "srv-test"
     assert data["confidence"] == 0.75
+    assert data["registered_at"] == date(2022, 12, 20)
     # Round-trip
     srv2 = Servitut(**data)
     assert srv2.title == "Test"
+    assert srv2.raw_scope_text == "Vedr. matr.nr. 1o"

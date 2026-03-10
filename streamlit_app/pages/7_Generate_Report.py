@@ -1,4 +1,5 @@
 import sys
+from datetime import date
 from pathlib import Path
 import json
 import html
@@ -68,6 +69,22 @@ if not selected_matrikler:
 
 st.divider()
 
+historical_mode = st.toggle(
+    "Afgræns redegørelsen til en historisk dato",
+    value=False,
+    help="Brug dette når rapporten skal afspejle servitutbilledet pr. en bestemt dato.",
+)
+as_of_date = None
+if historical_mode:
+    as_of_date = st.date_input(
+        "Servitutredegørelse pr. dato",
+        value=date.today(),
+        help="Servitutter med tinglysningsdato efter denne dato udelades fra rapporten.",
+    )
+    st.caption(f"Historisk afgrænsning aktiv: {as_of_date.isoformat()}")
+
+st.divider()
+
 servitutter = matrikel_service.filter_servitutter_for_target(
     storage_service.list_servitutter(case.case_id),
     selected_matrikler,
@@ -101,6 +118,7 @@ if st.button("Generer redegørelse", type="primary"):
                     case.case_id,
                     target_matrikler=selected_matrikler,
                     available_matrikler=[m.matrikelnummer for m in case.matrikler],
+                    as_of_date=as_of_date,
                 )
                 storage_service.save_report(report)
                 st.success(f"Rapport genereret: `{report.report_id}`")
@@ -121,6 +139,7 @@ def _build_markdown_report(report) -> str:
             [
                 f"**Projektmatrikler:** {', '.join(report.target_matrikler)}",
                 f"**Ejendommens matrikler:** {', '.join(report.available_matrikler) or 'Ikke angivet'}",
+                f"**Ajour pr. dato:** {report.as_of_date.isoformat() if report.as_of_date else 'Ikke angivet'}",
                 "",
             ]
         )

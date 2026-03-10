@@ -1,3 +1,4 @@
+from datetime import date
 import json
 from typing import List, Optional
 
@@ -12,6 +13,12 @@ from app.services.rag_service import find_relevant_chunks
 from app.utils.ids import generate_report_id
 
 logger = get_logger(__name__)
+
+
+def _resolve_report_provider() -> str | None:
+    if settings.REPORT_LLM_PROVIDER.strip():
+        return settings.REPORT_LLM_PROVIDER.strip()
+    return None
 
 
 def _load_prompt() -> str:
@@ -32,9 +39,23 @@ def _build_evidence_text(servitutter: List[Servitut], all_chunks: List[Chunk]) -
 def _resolve_report_model() -> str | None:
     if settings.REPORT_MODEL.strip():
         return settings.REPORT_MODEL.strip()
-    if settings.LLM_PROVIDER.strip().lower() == "deepseek":
+    provider = (settings.REPORT_LLM_PROVIDER or settings.LLM_PROVIDER).strip().lower()
+    if provider == "deepseek":
         return "deepseek-reasoner"
     return None
+
+
+def _filter_servitutter_by_as_of_date(
+    servitutter: List[Servitut],
+    as_of_date: Optional[date],
+) -> List[Servitut]:
+    if as_of_date is None:
+        return servitutter
+    return [
+        srv
+        for srv in servitutter
+        if srv.registered_at is None or srv.registered_at <= as_of_date
+    ]
 
 
 def _extract_json_object(text: str) -> dict:
@@ -134,13 +155,19 @@ def generate_report(
     case_id: str,
     target_matrikler: Optional[List[str]] = None,
     available_matrikler: Optional[List[str]] = None,
+    as_of_date: Optional[date] = None,
 ) -> Report:
     """Generate a structured report from extracted servitutter."""
     report_id = generate_report_id()
     prompt_template = _load_prompt()
     target_matrikler = target_matrikler or []
     available_matrikler = available_matrikler or []
-    filtered_servitutter = filter_servitutter_for_target(servitutter, target_matrikler, available_matrikler)
+    dated_servitutter = _filter_servitutter_by_as_of_date(servitutter, as_of_date)
+    filtered_servitutter = filter_servitutter_for_target(
+        dated_servitutter,
+        target_matrikler,
+        available_matrikler,
+    )
 
     servitutter_json = json.dumps(
         [s.model_dump() for s in filtered_servitutter],
@@ -160,6 +187,10 @@ def generate_report(
         "{all_matrikler_json}",
         json.dumps(available_matrikler, ensure_ascii=False),
     )
+    prompt = prompt.replace(
+        "{as_of_date}",
+        as_of_date.isoformat() if as_of_date else "ingen datoafgrænsning",
+    )
 
     markdown_content: Optional[str] = None
     entries: List[ReportEntry] = []
@@ -169,6 +200,7 @@ def generate_report(
         response_text = generate_text(
             prompt,
             max_tokens=8192,
+            provider=_resolve_report_provider(),
             model=_resolve_report_model(),
         ).strip()
         data = _extract_json_object(response_text)
@@ -206,6 +238,7 @@ def generate_report(
     report = Report(
         report_id=report_id,
         case_id=case_id,
+        as_of_date=as_of_date,
         target_matrikler=target_matrikler,
         available_matrikler=available_matrikler,
         servitutter=entries,

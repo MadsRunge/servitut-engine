@@ -9,6 +9,11 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
+from app.services.extraction.normalization import (
+    coerce_optional_str,
+    coerce_str_list,
+    parse_registered_at,
+)
 from app.services.extraction.progress import (
     ProgressCallback,
     _drain_progress_queue,
@@ -22,6 +27,18 @@ from app.utils.text import has_servitut_keywords
 logger = get_logger(__name__)
 
 _JSON_LIST_KEYS = ("servitutter", "matches", "items", "results", "data")
+
+
+def _resolve_extraction_provider() -> str | None:
+    if settings.EXTRACTION_LLM_PROVIDER.strip():
+        return settings.EXTRACTION_LLM_PROVIDER.strip()
+    return None
+
+
+def _resolve_extraction_model() -> str | None:
+    if settings.EXTRACTION_MODEL.strip():
+        return settings.EXTRACTION_MODEL.strip()
+    return None
 
 
 def _prescreeen_chunks(chunks: List[Chunk]) -> List[Chunk]:
@@ -156,7 +173,12 @@ def _extract_document_servitutter(
             message="Sender LLM-kald",
             worker=worker_name,
         )
-        response_text = generate_text(prompt, max_tokens=_max_tokens_for_source_type(source_type))
+        response_text = generate_text(
+            prompt,
+            max_tokens=_max_tokens_for_source_type(source_type),
+            provider=_resolve_extraction_provider(),
+            default_model=_resolve_extraction_model(),
+        )
         _emit_progress(
             callback,
             doc_id=doc_id,
@@ -180,31 +202,34 @@ def _extract_document_servitutter(
         )
         return []
 
-    def _coerce_str_list(value: object) -> list[str]:
-        if isinstance(value, list):
-            return [str(v).strip().lower() for v in value if str(v).strip()]
-        if isinstance(value, str) and value.strip():
-            return [value.strip().lower()]
-        return []
-
     servitutter: List[Servitut] = []
     for i, item in enumerate(extracted):
+        date_reference = coerce_optional_str(item.get("date_reference"))
+        scope_source = coerce_optional_str(item.get("scope_source")) or source_type
         servitut = Servitut(
             servitut_id=generate_servitut_id(),
             case_id=case_id,
             source_document=doc_id,
             priority=i,
-            date_reference=item.get("date_reference"),
-            akt_nr=item.get("akt_nr"),
-            title=item.get("title"),
-            summary=item.get("summary"),
-            beneficiary=item.get("beneficiary"),
-            disposition_type=item.get("disposition_type"),
-            legal_type=item.get("legal_type"),
+            date_reference=date_reference,
+            registered_at=parse_registered_at(item.get("registered_at"), date_reference),
+            akt_nr=coerce_optional_str(item.get("akt_nr")),
+            title=coerce_optional_str(item.get("title")),
+            summary=coerce_optional_str(item.get("summary")),
+            beneficiary=coerce_optional_str(item.get("beneficiary")),
+            disposition_type=coerce_optional_str(item.get("disposition_type")),
+            legal_type=coerce_optional_str(item.get("legal_type")),
             construction_relevance=item.get("construction_relevance", False) or False,
-            byggeri_markering=item.get("byggeri_markering"),
-            action_note=item.get("action_note"),
-            applies_to_matrikler=_coerce_str_list(item.get("applies_to_matrikler")),
+            byggeri_markering=coerce_optional_str(item.get("byggeri_markering")),
+            action_note=coerce_optional_str(item.get("action_note")),
+            applies_to_matrikler=coerce_str_list(item.get("applies_to_matrikler")),
+            raw_matrikel_references=coerce_str_list(item.get("raw_matrikel_references"))
+            or coerce_str_list(item.get("applies_to_matrikler")),
+            raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
+            or coerce_optional_str(item.get("scope_basis")),
+            scope_source=scope_source,
+            scope_basis=coerce_optional_str(item.get("scope_basis")),
+            scope_confidence=item.get("scope_confidence"),
             confidence=float(item.get("confidence", 0.5) or 0.5),
             evidence=_find_evidence_chunk(chunk_list, doc_id),
         )

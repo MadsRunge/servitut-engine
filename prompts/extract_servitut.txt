@@ -4,6 +4,7 @@ Analysér følgende tekstuddrag fra et ejendomsdokument og udtræk ALLE servitut
 
 For hver servitut, returner et JSON-objekt med disse felter:
 - date_reference: Dato og løbenummer (fx "14.09.1903-913066-40"). Brug null hvis ukendt.
+- registered_at: Tinglysningsdato som ISO-dato `YYYY-MM-DD`, hvis den fremgår sikkert af date_reference eller teksten. Brug null hvis ukendt.
 - title: Kort, præcis titel på servitutten (fx "Vejret til naboejendommen").
 - summary: Beskrivelse af servituttens indhold — hvad den regulerer og hvad den forbyder/tillader.
 - beneficiary: Påtaleberettiget — hvem kan håndhæve servitutten (fx "Vejdirektoratet", "naboejendommen matr. 5a", "kommunen").
@@ -15,6 +16,12 @@ For hver servitut, returner et JSON-objekt med disse felter:
     "orange" — Der skal tages stilling til servitutten (fx mulig aflysning, uafklaret omfang, ledninger der kan flyttes)
     "sort"   — Servitutten vedrører ikke projektområdet eller har ingen byggerelevans
 - action_note: Anbefalet handling (fx "Kontakt Vejdirektoratet for evt. aflysning", "Ingen handling nødvendig", "Undersøg om servitutten er aflyst").
+- applies_to_matrikler: Liste over eksplicit nævnte matrikelnumre som servitutten gælder for. Returner kun numre der faktisk står i teksten. Gæt ikke.
+- raw_matrikel_references: Liste over ALLE rå matrikelhenvisninger du finder i teksten for denne servitut. Normaliser til lowercase.
+- raw_scope_text: Kort citat eller tekstnær gengivelse af den del af teksten der begrunder scope. Brug null hvis intet eksplicit scope kan findes.
+- scope_source: Sæt altid denne til "akt".
+- scope_basis: Kort forklaring på hvorfor applies_to_matrikler er sat som den er.
+- scope_confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på scope-vurderingen.
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket. 1.0 = meget sikker, 0.5 = usikker, 0.0 = gætteri.
 
 Returner KUN et JSON-array med servitut-objekter. Ingen forklarende tekst før eller efter.

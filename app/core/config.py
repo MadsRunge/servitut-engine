@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     MODEL: str = "claude-sonnet-4-6"
+    EXTRACTION_LLM_PROVIDER: str = ""
+    EXTRACTION_MODEL: str = ""
+    REPORT_LLM_PROVIDER: str = ""
     REPORT_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: int = 120
     STORAGE_DIR: str = "storage"

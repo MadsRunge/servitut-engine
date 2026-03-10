@@ -16,6 +16,22 @@ _MATRIKEL_BLOCK_RE = re.compile(
 )
 
 
+def _normalize_matrikelnummer(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+
+    cleaned = "".join(value.strip().lower().split())
+    if not cleaned:
+        return None
+
+    match = re.fullmatch(r"(?P<number>\d+)(?P<suffix>[a-z]*)", cleaned)
+    if not match:
+        return cleaned
+
+    number = str(int(match.group("number")))
+    return f"{number}{match.group('suffix')}"
+
+
 def _normalize_target_matrikler(
     target_matrikler: Optional[List[str] | str],
 ) -> List[str]:
@@ -23,7 +39,16 @@ def _normalize_target_matrikler(
         return []
     if isinstance(target_matrikler, str):
         target_matrikler = [target_matrikler]
-    return [m.strip().lower() for m in target_matrikler if isinstance(m, str) and m.strip()]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for matrikelnummer in target_matrikler:
+        key = _normalize_matrikelnummer(matrikelnummer)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(key)
+    return normalized
 
 
 def parse_matrikler_from_text(text: str) -> List[Matrikel]:
@@ -32,9 +57,10 @@ def parse_matrikler_from_text(text: str) -> List[Matrikel]:
 
     for match in _MATRIKEL_BLOCK_RE.finditer(text):
         matrikelnummer = match.group("matrikelnummer").strip().lower()
-        if matrikelnummer in seen:
+        normalized = _normalize_matrikelnummer(matrikelnummer) or matrikelnummer
+        if normalized in seen:
             continue
-        seen.add(matrikelnummer)
+        seen.add(normalized)
         areal_text = match.group("areal").strip()
         matrikler.append(
             Matrikel(
@@ -74,9 +100,16 @@ def sync_case_matrikler(case_id: str, attest_doc_ids: Optional[Iterable[str]] = 
         return case
 
     case.matrikler = parsed
-    valid_targets = {matrikel.matrikelnummer for matrikel in parsed}
-    if case.target_matrikel not in valid_targets:
+    valid_targets = {
+        normalized: matrikel.matrikelnummer
+        for matrikel in parsed
+        if (normalized := _normalize_matrikelnummer(matrikel.matrikelnummer))
+    }
+    current_target = _normalize_matrikelnummer(case.target_matrikel)
+    if not current_target or current_target not in valid_targets:
         case.target_matrikel = parsed[0].matrikelnummer
+    else:
+        case.target_matrikel = valid_targets[current_target]
     storage_service.save_case(case)
     logger.info("Synced %s matrikler for case %s", len(parsed), case_id)
     return case
@@ -87,12 +120,19 @@ def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
     if not case:
         return None
 
-    normalized = matrikelnummer.strip().lower()
-    valid_targets = {matrikel.matrikelnummer for matrikel in case.matrikler}
+    normalized = _normalize_matrikelnummer(matrikelnummer)
+    if not normalized:
+        return case
+
+    valid_targets = {
+        key: matrikel.matrikelnummer
+        for matrikel in case.matrikler
+        if (key := _normalize_matrikelnummer(matrikel.matrikelnummer))
+    }
     if valid_targets and normalized not in valid_targets:
         return case
 
-    case.target_matrikel = normalized
+    case.target_matrikel = valid_targets.get(normalized, matrikelnummer.strip().lower())
     storage_service.save_case(case)
     return case
 
@@ -111,7 +151,11 @@ def resolve_target_matrikel_scope(
     normalized_targets = set(_normalize_target_matrikler(target_matrikler))
     if not normalized_targets:
         return None
-    normalized_applies = {m.strip().lower() for m in applies_to_matrikler if m.strip()}
+    normalized_applies = {
+        normalized
+        for matrikelnummer in applies_to_matrikler
+        if (normalized := _normalize_matrikelnummer(matrikelnummer))
+    }
     if not normalized_applies:
         return None
     if normalized_targets & normalized_applies:
@@ -119,7 +163,11 @@ def resolve_target_matrikel_scope(
     # If none of applies_to_matrikler appear in available_matrikler either,
     # they are likely old/historical numbers — return None (Måske) instead of False.
     if available_matrikler:
-        normalized_available = {m.strip().lower() for m in available_matrikler if m.strip()}
+        normalized_available = {
+            normalized
+            for matrikelnummer in available_matrikler
+            if (normalized := _normalize_matrikelnummer(matrikelnummer))
+        }
         if not normalized_applies & normalized_available:
             return None
     return False
@@ -130,9 +178,22 @@ def resolve_matching_target_matrikler(
     target_matrikler: List[str] | str,
 ) -> List[str]:
     """Return which of the target matrikler the servitut explicitly applies to."""
-    normalized_applies = {m.strip().lower() for m in applies_to_matrikler if m.strip()}
-    normalized_targets = _normalize_target_matrikler(target_matrikler)
-    return [m for m in normalized_targets if m in normalized_applies]
+    normalized_applies = {
+        normalized
+        for matrikelnummer in applies_to_matrikler
+        if (normalized := _normalize_matrikelnummer(matrikelnummer))
+    }
+    raw_targets = [target_matrikler] if isinstance(target_matrikler, str) else target_matrikler
+
+    matches: list[str] = []
+    for target in raw_targets:
+        if not isinstance(target, str):
+            continue
+        cleaned = target.strip().lower()
+        normalized = _normalize_matrikelnummer(cleaned)
+        if normalized and normalized in normalized_applies and cleaned not in matches:
+            matches.append(cleaned)
+    return matches
 
 
 def filter_servitutter_for_target(
