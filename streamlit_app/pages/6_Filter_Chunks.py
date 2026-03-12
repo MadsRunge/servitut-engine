@@ -177,13 +177,13 @@ elif scoring_results is not None:
         for r in scoring_results:
             if r["skipped"]:
                 icon = "⊘"
-                label = f"{icon} &nbsp; {r['filename']} — **ingen kandidater** (sprunget over)"
+                label = f"{icon} {r['filename']} — ingen kandidater (sprunget over)"
             else:
                 icon = "✅"
                 label = (
-                    f"{icon} &nbsp; {r['filename']} — "
-                    f"**{r['candidate_count']}/{r['total_chunks']} chunks** | "
-                    f"max_score={r['max_score']} | {r['candidate_chars']:,} tegn"
+                    f"{icon} {r['filename']} — "
+                    f"{r['candidate_count']}/{r['total_chunks']} chunks | "
+                    f"max\\_score={r['max_score']} | {r['candidate_chars']:,} tegn"
                 )
 
             with st.expander(label, expanded=False):

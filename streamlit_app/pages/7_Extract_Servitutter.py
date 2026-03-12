@@ -1,7 +1,15 @@
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+
+def _md(value: object) -> str:
+    """Escape markdown special characters in dynamic/LLM-generated values."""
+    if value is None:
+        return "—"
+    return re.sub(r'([\\*_\[\]()#`|>~])', r'\\\1', str(value))
 
 import streamlit as st
 
@@ -191,28 +199,28 @@ else:
     for srv in servitutter:
         icon, badge_label = MARKERING_BADGE.get(srv.byggeri_markering or "", ("—", "Ikke vurderet"))
         title_text = srv.title or "Ukendt titel"
-        unconfirmed_prefix = "⚠️ &nbsp;" if not srv.attest_confirmed else ""
+        unconfirmed_prefix = "⚠️ " if not srv.attest_confirmed else ""
 
-        with st.expander(f"{unconfirmed_prefix}{icon} &nbsp; {title_text}", expanded=False):
+        with st.expander(f"{unconfirmed_prefix}{icon} {title_text}", expanded=False):
             col_a, col_b, col_c = st.columns([2, 1, 1])
-            col_a.markdown(f"**Løbenummer / dato**\n\n{srv.date_reference or '—'}")
+            col_a.markdown(f"**Løbenummer / dato**\n\n{_md(srv.date_reference)}")
             col_b.markdown(f"**Gælder målmatrikel**\n\n{TARGET_LABEL[srv.applies_to_target_matrikel]}")
-            col_c.markdown(f"**Byggemarkering**\n\n{icon} {badge_label}")
+            col_c.markdown(f"**Byggemarkering**\n\n{icon} {_md(badge_label)}")
 
             st.divider()
 
             col1, col2 = st.columns(2)
-            col1.markdown(f"**Påtaleberettiget**\n\n{srv.beneficiary or '—'}")
-            col1.markdown(f"**Rådighed / tilstand**\n\n{srv.disposition_type or '—'}")
-            col2.markdown(f"**Retlig type**\n\n{srv.legal_type or '—'}")
-            col2.markdown(f"**Handling**\n\n{srv.action_note or '—'}")
+            col1.markdown(f"**Påtaleberettiget**\n\n{_md(srv.beneficiary)}")
+            col1.markdown(f"**Rådighed / tilstand**\n\n{_md(srv.disposition_type)}")
+            col2.markdown(f"**Retlig type**\n\n{_md(srv.legal_type)}")
+            col2.markdown(f"**Handling**\n\n{_md(srv.action_note)}")
 
             st.divider()
 
             if srv.summary:
-                st.markdown(f"**Beskrivelse**\n\n{srv.summary}")
+                st.markdown(f"**Beskrivelse**\n\n{_md(srv.summary)}")
             if srv.scope_basis:
-                st.caption(f"Scope-grundlag: {srv.scope_basis}")
+                st.caption(f"Scope-grundlag: {_md(srv.scope_basis)}")
             if srv.applies_to_matrikler:
                 st.caption(f"Gælder matrikler: {', '.join(srv.applies_to_matrikler)}")
 
