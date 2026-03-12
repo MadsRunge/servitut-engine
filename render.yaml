@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: servitut-engine
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    disk:
+      name: servitut-storage
+      mountPath: /app/storage
+      sizeGB: 10
+    envVars:
+      - key: STORAGE_DIR
+        value: /app/storage
+      - key: PROMPTS_DIR
+        value: /app/prompts
+      - key: MODEL
+        value: claude-sonnet-4-6
+      - key: OCR_LANGUAGE
+        value: dan+eng
+      - key: OCR_DESKEW
+        value: "true"
+      - key: OCR_JOBS
+        value: "2"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APP_PIN
+        sync: false

@@ -6,6 +6,7 @@ from typing import Iterable
 
 import streamlit as st
 
+from app.core.config import settings
 from app.models.report import ReportEntry
 from app.services import case_service, matrikel_service, storage_service
 
@@ -38,8 +39,53 @@ def _escape_text(value: object) -> str:
     return html.escape("" if value is None else str(value))
 
 
+def _render_pin_gate() -> None:
+    st.markdown(
+        """
+        <style>
+        .pin-gate {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 60vh;
+          gap: 1rem;
+        }
+        .pin-gate h2 {
+          font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+          font-size: 1.8rem;
+          margin: 0;
+        }
+        .pin-gate p {
+          color: #6e6259;
+          margin: 0;
+        }
+        </style>
+        <div class="pin-gate">
+          <h2>Servitut Engine</h2>
+          <p>Indtast PIN-kode for at fortsætte</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _, col, _ = st.columns([1, 1, 1])
+    with col:
+        pin = st.text_input("PIN-kode", type="password", label_visibility="collapsed", placeholder="PIN-kode")
+        if st.button("Log ind", use_container_width=True):
+            if pin == settings.APP_PIN:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Forkert PIN-kode.")
+
+
 def setup_page(title: str, description: str, step: str, layout: str = "wide") -> None:
     st.set_page_config(page_title=title, layout=layout)
+
+    if settings.APP_PIN and not st.session_state.get("authenticated"):
+        _render_pin_gate()
+        st.stop()
+
     _inject_styles()
     _render_sidebar(step)
     st.markdown(

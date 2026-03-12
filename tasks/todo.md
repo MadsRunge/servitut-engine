@@ -259,6 +259,32 @@
 
 ## Report download button fix plan
 
+## Hosting evaluation plan
+
+- [x] Kortlæg projektets runtime-arkitektur og aktuelle storage-model
+- [x] Sammenhold Streamlit, FastAPI, OCR og filstorage med relevante hostingplatformes begrænsninger
+- [x] Anbefal en konkret hostingstrategi for nuværende kodebase samt en multi-user storage-retning
+
+## Hosting evaluation review
+
+- Bekræftede, at Streamlit-siderne kalder services direkte i Python og læser/skriver runtime-data via `storage/cases`, så appen er stateful og ikke designet som stateless frontend mod et separat API-lag
+- Bekræftede, at OCR-pipelinen bruger `ocrmypdf`, hvilket kræver systempakker ud over Python dependencies og gør platformvalg mere restriktivt
+- Vurderede Render som bedste kortsigtede hostingmatch for nuværende kodebase, fordi en enkelt Docker-service med persistent disk matcher både Streamlit, OCR og lokal artefakt-cache
+- Vurderede, at rigtig per-user isolation ikke bør bygges som “én fysisk disk pr. bruger”, men som applikationsstyret separation via bruger-id, sagsejerskab og på sigt database + objektstorage
+
+## Hosting documentation plan
+
+- [x] Definér hvilke dele af Render-deployet der skal dokumenteres for den nuværende kodebase
+- [x] Beskriv en kortsigtet multi-user model oven på eksisterende filstorage
+- [x] Beskriv en langsigtet arkitektur med database og objektstorage og gem dokumentet i `docs/`
+
+## Hosting documentation review
+
+- Oprettede en samlet drifts- og arkitekturguide i `docs/render-hosting-og-multi-user-arkitektur.md`
+- Dokumentationen beskriver både den anbefalede v1-deploy på Render med én Docker-service og persistent disk samt de konkrete begrænsninger ved at køre OCR og storage stateful i én instans
+- Dokumentationen beskriver en minimal multi-user model for den nuværende app med `owner_user_id` og bruger-separerede stier under `storage/`
+- Dokumentationen beskriver også den anbefalede fremtidige SaaS-retning med auth, Postgres, objektstorage og asynkron jobafvikling
+
 - [x] Find årsagen til `StreamlitDuplicateElementId` på rapport-siden
 - [x] Tilføj stabile unikke keys til rapportens download-knapper
 - [x] Verificér at siden stadig parser syntaktisk
