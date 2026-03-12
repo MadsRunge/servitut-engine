@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import html
 from typing import Iterable
 
 import streamlit as st
@@ -33,6 +34,10 @@ class CaseStats:
     case_status: str
 
 
+def _escape_text(value: object) -> str:
+    return html.escape("" if value is None else str(value))
+
+
 def setup_page(title: str, description: str, step: str, layout: str = "wide") -> None:
     st.set_page_config(page_title=title, layout=layout)
     _inject_styles()
@@ -41,8 +46,8 @@ def setup_page(title: str, description: str, step: str, layout: str = "wide") ->
         f"""
         <section class="hero-shell">
           <div class="hero-eyebrow">Servitut Engine</div>
-          <h1>{title}</h1>
-          <p>{description}</p>
+          <h1>{_escape_text(title)}</h1>
+          <p>{_escape_text(description)}</p>
         </section>
         """,
         unsafe_allow_html=True,
@@ -151,6 +156,38 @@ def _inject_styles() -> None:
           background: linear-gradient(135deg, rgba(15,118,110,0.16), rgba(15,118,110,0.08));
           border-color: rgba(15,118,110,0.22);
           color: var(--accent);
+        }
+
+        .sidebar-steps {
+          display: grid;
+          gap: 0.45rem;
+          margin-top: 0.85rem;
+          pointer-events: none;
+          user-select: none;
+          -webkit-user-select: none;
+        }
+
+        .sidebar-step {
+          display: flex;
+          align-items: center;
+          min-height: 2.5rem;
+          padding: 0.55rem 0.8rem;
+          border-radius: 16px;
+          border: 1px solid rgba(234, 223, 206, 0.14);
+          background: rgba(255, 255, 255, 0.04);
+          color: #eadfce;
+          font-size: 0.92rem;
+          font-weight: 600;
+          line-height: 1.2;
+          transition: none;
+          cursor: default;
+        }
+
+        .sidebar-step.active {
+          border-color: rgba(109, 214, 202, 0.28);
+          background: linear-gradient(135deg, rgba(15, 118, 110, 0.34), rgba(15, 118, 110, 0.18));
+          color: #f7f4ee;
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
         }
 
         .section-title {
@@ -319,11 +356,14 @@ def _render_sidebar(active_step: str) -> None:
     with st.sidebar:
         st.markdown("### Servitut Engine")
         st.caption("OCR-first sagsflow for servitutanalyse")
-        pills = []
+        steps = []
         for step_key, label in PIPELINE_STEPS[1:]:
             state = "active" if step_key == active_step else ""
-            pills.append(f'<div class="pipeline-pill {state}">{label}</div>')
-        st.markdown("".join(pills), unsafe_allow_html=True)
+            steps.append(f'<div class="sidebar-step {state}">{label}</div>')
+        st.markdown(
+            f'<div class="sidebar-steps" aria-hidden="true">{"".join(steps)}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_pipeline_progress(active_step: str) -> None:
@@ -335,17 +375,17 @@ def render_pipeline_progress(active_step: str) -> None:
 
 
 def render_section(title: str, copy: str | None = None) -> None:
-    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title">{_escape_text(title)}</div>', unsafe_allow_html=True)
     if copy:
-        st.markdown(f'<div class="section-copy">{copy}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-copy">{_escape_text(copy)}</div>', unsafe_allow_html=True)
 
 
 def render_empty_state(title: str, body: str) -> None:
     st.markdown(
         f"""
         <div class="empty-card">
-          <strong>{title}</strong><br/>
-          <span class="mini-note">{body}</span>
+          <strong>{_escape_text(title)}</strong><br/>
+          <span class="mini-note">{_escape_text(body)}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -359,25 +399,13 @@ def render_stat_cards(cards: Iterable[tuple[str, str, str]]) -> None:
         column.markdown(
             f"""
             <div class="stat-card">
-              <div class="stat-label">{label}</div>
-              <div class="stat-value">{value}</div>
-              <div class="stat-note">{note}</div>
+              <div class="stat-label">{_escape_text(label)}</div>
+              <div class="stat-value">{_escape_text(value)}</div>
+              <div class="stat-note">{_escape_text(note)}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-
-
-def render_panel_start(title: str, copy: str | None = None) -> None:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown(f"**{title}**")
-    if copy:
-        st.caption(copy)
-
-
-def render_panel_end() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
-
 
 def select_case(label: str = "Aktiv sag", key: str = "active_case_id"):
     cases = case_service.list_cases()
@@ -434,14 +462,14 @@ def compute_case_stats(case_id: str) -> CaseStats:
 def render_case_banner(case) -> None:
     chips = []
     if case.address:
-        chips.append(f'<span class="case-chip">{case.address}</span>')
+        chips.append(f'<span class="case-chip">{_escape_text(case.address)}</span>')
     if case.external_ref:
-        chips.append(f'<span class="case-chip">Ref: {case.external_ref}</span>')
+        chips.append(f'<span class="case-chip">Ref: {_escape_text(case.external_ref)}</span>')
     if case.target_matrikel:
-        chips.append(f'<span class="case-chip">Målmatrikel: {case.target_matrikel}</span>')
+        chips.append(f'<span class="case-chip">Målmatrikel: {_escape_text(case.target_matrikel)}</span>')
     if case.matrikler:
         chips.append(f'<span class="case-chip">{len(case.matrikler)} matrikler på ejendommen</span>')
-    chips.append(f'<span class="case-chip">Status: {case.status}</span>')
+    chips.append(f'<span class="case-chip">Status: {_escape_text(case.status)}</span>')
     st.markdown("".join(chips), unsafe_allow_html=True)
 
 
@@ -517,28 +545,28 @@ def render_report_entry_card(entry: ReportEntry) -> None:
             <div style="display:flex; gap:0.85rem; align-items:flex-start;">
               <div class="report-card-nr">{entry.nr}</div>
               <div>
-                <div class="report-card-title">{entry.description or "Ingen beskrivelse"}</div>
-                <div class="mini-note">{entry.date_reference or "Dato/løbenummer mangler"}</div>
+                <div class="report-card-title">{_escape_text(entry.description or "Ingen beskrivelse")}</div>
+                <div class="mini-note">{_escape_text(entry.date_reference or "Dato/løbenummer mangler")}</div>
               </div>
             </div>
-            <div class="report-badge {relevant_class}">{relevant_label}</div>
+            <div class="report-badge {relevant_class}">{_escape_text(relevant_label)}</div>
           </div>
           <div class="report-grid">
             <div>
               <div class="report-field-label">Påtaleberettiget</div>
-              <div class="report-field-value">{entry.beneficiary or "Ikke angivet"}</div>
+              <div class="report-field-value">{_escape_text(entry.beneficiary or "Ikke angivet")}</div>
             </div>
             <div>
               <div class="report-field-label">Rådighed / Tilstand</div>
-              <div class="report-field-value">{entry.disposition or "Ikke angivet"}</div>
+              <div class="report-field-value">{_escape_text(entry.disposition or "Ikke angivet")}</div>
             </div>
             <div>
               <div class="report-field-label">Retlig type</div>
-              <div class="report-field-value">{entry.legal_type or "Ikke angivet"}</div>
+              <div class="report-field-value">{_escape_text(entry.legal_type or "Ikke angivet")}</div>
             </div>
             <div>
               <div class="report-field-label">Håndtering / Handling</div>
-              <div class="report-field-value">{entry.action or "Ingen handling angivet"}</div>
+              <div class="report-field-value">{_escape_text(entry.action or "Ingen handling angivet")}</div>
             </div>
           </div>
         </div>

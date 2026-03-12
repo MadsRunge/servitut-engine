@@ -298,3 +298,31 @@
 - Scoring-funktionerne i `app/services/extraction/enricher.py` er gjort offentlige som `build_scoring_signals`, `score_chunks` og `select_candidate_chunks`, og imports/tests er opdateret til at bruge dem
 - Beholdt midlertidige aliases til de gamle private navne i enricheren for bagudkompatibilitet inde i modulet, men cross-module brug er flyttet til det offentlige API
 - Verificeret med `uv run pytest tests/test_ocr_pipeline.py tests/test_documents_api.py tests/test_extraction_service.py -q` (`31 passed`) samt `python -m py_compile` på de ændrede OCR-/extraction-filer
+
+## Sidebar step UI fix plan
+
+- [x] Gennemgå sidebar-stepvisualiseringen og identificér hvorfor hover/click giver ustabil UI-opførsel
+- [x] Refaktorer komponenten i `streamlit_app/ui.py`, så den er visuelt isoleret og ikke interaktiv
+- [x] Kør fokuseret syntaks-/integritetskontrol og dokumentér resultatet
+
+## Sidebar step UI fix review
+
+- Sidebar-stepvisualiseringen i `streamlit_app/ui.py` var en dekorativ custom HTML-render uden eget CSS-scope; fixet isolerer den nu i egne `sidebar-steps`/`sidebar-step`-klasser i stedet for at genbruge de almindelige pipeline-pills
+- Komponenten er nu eksplicit ikke-interaktiv med `pointer-events: none`, `user-select: none` og `cursor: default`, så hover/click ikke kan trigge selection/focus-opførsel i sidebarens widget-lag
+- Aktivt trin bevares visuelt via dedikeret `sidebar-step.active`-styling, men uden transitions eller interaktionsadfærd
+- Verificeret med `python -m py_compile` på `streamlit_app/ui.py` samt alle Streamlit-sider
+
+## Streamlit UI hardening plan
+
+- [x] Gennemgå fælles UI-helpers og sider med `unsafe_allow_html=True` for DOM-fragile mønstre
+- [x] Sanitizér dynamiske værdier i `streamlit_app/ui.py` og fjern usikker rå HTML, hvor native widgets er nok
+- [x] Omskriv progress-/statusvisninger i extract/filter-sider til sikker Markdown uden HTML-injektion
+- [x] Kør fokuseret verifikation af Streamlit-modulerne og dokumentér resultatet
+
+## Streamlit UI hardening review
+
+- `streamlit_app/ui.py` escaper nu dynamiske værdier i hero, sektioner, empty states, stat cards, case-banner og rapportkort, så rå HTML ikke kan brydes af case-/LLM-data
+- Fjernede den ubrugte `render_panel_start`/`render_panel_end`-helper, som byggede åbne/lukkede `<div>`-tags over flere Streamlit-calls og derfor var et latent DOM-risiko-mønster
+- Progress-visningerne i `streamlit_app/pages/6_Filter_Chunks.py` og `streamlit_app/pages/7_Extract_Servitutter.py` bruger nu almindelig Markdown i stedet for `unsafe_allow_html=True`
+- Extract-sidens servitut-footer bruger nu ren tekst i `st.caption(...)` i stedet for HTML-entiteter og `unsafe_allow_html`
+- Verificeret med `python -m py_compile` på `streamlit_app/ui.py`, `streamlit_app/Home.py` og alle Streamlit-sider

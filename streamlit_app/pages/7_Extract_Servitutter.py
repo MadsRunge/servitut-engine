@@ -123,11 +123,8 @@ if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
             name = doc_name.get(did, did)
             typ = "Tinglysningsattest" if state["source_type"] == "tinglysningsattest" else "Akt"
             msg = state.get("message", "")
-            rows.append(
-                f"{icon} &nbsp; **{name}** &nbsp; "
-                f"<span style='color:gray;font-size:0.85em'>{typ} — {msg}</span>"
-            )
-        docs_ph.markdown("\n\n".join(rows), unsafe_allow_html=True)
+            rows.append(f"- {icon} **{name}** — {typ}: {msg}")
+        docs_ph.markdown("\n".join(rows))
 
     try:
         servitutter = extract_servitutter(
@@ -227,8 +224,7 @@ else:
                         st.code(ev.text_excerpt[:300], language="text")
 
             st.caption(
-                f"Confidence: {srv.confidence:.0%} &nbsp;|&nbsp; "
-                f"Kilde: {doc_name.get(srv.source_document, srv.source_document)} &nbsp;|&nbsp; "
-                f"ID: {srv.servitut_id}",
-                unsafe_allow_html=True,
+                f"Confidence: {srv.confidence:.0%} | "
+                f"Kilde: {doc_name.get(srv.source_document, srv.source_document)} | "
+                f"ID: {srv.servitut_id}"
             )

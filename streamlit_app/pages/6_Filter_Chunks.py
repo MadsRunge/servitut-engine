@@ -84,8 +84,8 @@ if _run_canonical:
         rows = []
         for did, state in doc_states.items():
             icon = STAGE_ICON.get(state["stage"], "⏳")
-            rows.append(f"{icon} &nbsp; `{did}` — {state['message']}")
-        status_ph.markdown("\n\n".join(rows), unsafe_allow_html=True)
+            rows.append(f"- {icon} `{did}` — {state['message']}")
+        status_ph.markdown("\n".join(rows))
 
     with st.spinner("Udtræk tinglysningsattest..."):
         try:
