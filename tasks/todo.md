@@ -219,6 +219,21 @@
 - [x] Nulstil OCR- og chunk-artefakter for Aalborg uden at slette originale PDF-filer eller sagsmetadata
 - [x] Verificér at dokumentmetadata er sat tilbage til pre-OCR status og dokumentér resultatet
 
+## OCR performance optimization plan
+
+- [x] Gennemgå OCR-flowet og fastlæg hvor genkørsel og sekventielt arbejde koster unødigt meget tid
+- [x] Implementér artifact-reuse så uændrede PDF'er kan genbruge eksisterende `ocr.pdf`, OCR-sider og chunks
+- [x] Saml OCR-pipeline-logikken i én service, så Streamlit og API bruger samme optimerede vej
+- [x] Tilføj tests for cache-hit/cache-miss-adfærd og kør fokuseret verifikation
+
+## OCR performance optimization review
+
+- OCR-kørslen havde to konkrete flaskehalse: `ocrmypdf` blev tvunget til `jobs=1`, og både UI og API kørte hele OCR-kæden igen selv når `ocr.pdf`, OCR-sider og chunks allerede fandtes og var friske
+- Tilføjede en fælles `run_document_pipeline()` i `app/services/ocr_service.py`, som genbruger eksisterende artefakter når `original.pdf` ikke er nyere end de afledte filer
+- Streamlit- og API-laget bruger nu samme pipeline, så optimeringen gælder både batchkørsel og enkeltkørsel
+- OCR-workerantal er nu konfigurerbart via `OCR_JOBS`; standarden er auto (`0` => op til 4 CPU-kerner) i stedet for hårdkodet single-threaded kørsel
+- Verificeret med `uv run pytest tests/test_ocr_pipeline.py tests/test_documents_api.py -q` (`15 passed`)
+
 ## Aalborg OCR reset review
 
 - Identificerede Aalborg-sagen som `case-947bbd23`
@@ -268,3 +283,18 @@
 - Rapport-inputtet er redundant: hele `Servitut.model_dump()` sendes til modellen, inklusive nested `evidence` og øvrige felter, og derefter sendes et separat `evidence_text` oveni med top-chunks for samme servitutter
 - Estimeret outputstørrelse ser ikke ud til at være den primære flaskehals (`~5833` tokens for Aalborg-lignende JSON og `~2207` tokens for Middelfart-lignende JSON, begge under `max_tokens=8192`)
 - Den mest sandsynlige root cause er derfor ikke outputtrunkering men at rapport-prompten er for tung og redundant, hvilket gør DeepSeek-reportkaldet skrøbeligt og øger sandsynligheden for et ikke-parsebart JSON-svar; på Aalborg er inputstørrelsen i sig selv sandsynligvis stor nok til at være hovedårsagen
+
+## OCR/extraction follow-up fix plan
+
+- [x] Gør OCR batch-flowet eksplicit None-sikkert, så afslutningsgrenen ikke kan falde videre til spinner-kaldet
+- [x] Fjern N+1-dokumentload i canonical-attest-udtræk ved at preloade dokumentmetadata pr. dokument-id
+- [x] Erstat cross-module imports af private scoring-funktioner med et offentligt API og opdatér brugere/tests
+- [x] Kør fokuseret verifikation for OCR- og extraction-flowet og dokumentér resultatet
+
+## OCR/extraction follow-up fix review
+
+- OCR-batchen i `streamlit_app/pages/3_Run_OCR.py` har nu en eksplicit `else`-gren omkring spinner/run-kaldet, så `next_doc is None` ikke kan falde videre til OCR-eksekvering selv hvis `st.rerun()`-semantikken ændrer sig
+- `extract_canonical_from_attest()` og den øvrige dokumenttype-opslag i `app/services/extraction_service.py` preloader nu dokumentmetadata én gang via `storage_service.list_documents(case_id)` i stedet for per chunk / per dokument-opslag
+- Scoring-funktionerne i `app/services/extraction/enricher.py` er gjort offentlige som `build_scoring_signals`, `score_chunks` og `select_candidate_chunks`, og imports/tests er opdateret til at bruge dem
+- Beholdt midlertidige aliases til de gamle private navne i enricheren for bagudkompatibilitet inde i modulet, men cross-module brug er flyttet til det offentlige API
+- Verificeret med `uv run pytest tests/test_ocr_pipeline.py tests/test_documents_api.py tests/test_extraction_service.py -q` (`31 passed`) samt `python -m py_compile` på de ændrede OCR-/extraction-filer

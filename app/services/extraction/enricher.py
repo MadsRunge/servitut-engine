@@ -176,7 +176,7 @@ def _resolve_canonical_key(
 # Deterministisk chunk-selektion
 # ---------------------------------------------------------------------------
 
-def _build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]]:
+def build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]]:
     """Preberegn normaliserede søgesignaler fra canonical-listen."""
     signals: dict[str, set[str]] = {
         "akt_nr": set(),
@@ -205,7 +205,7 @@ def _build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]
     return signals
 
 
-def _score_chunks(
+def score_chunks(
     chunk_list: List[Chunk],
     signals: dict[str, set[str]],
 ) -> list[tuple[int, int, list[str]]]:
@@ -242,7 +242,7 @@ def _score_chunks(
     return scored
 
 
-def _select_candidate_chunks(
+def select_candidate_chunks(
     chunk_list: List[Chunk],
     canonical_list: List[Servitut],
     context_window: int = 1,
@@ -251,12 +251,12 @@ def _select_candidate_chunks(
     Score chunks mod canonical-signaler og returner top-N kandidater med kontekstvinduer.
     Returnerer tom liste hvis ingen chunks har tilstrækkelig signal (→ skip LLM-kald).
     """
-    signals = _build_scoring_signals(canonical_list)
-    scored = _score_chunks(chunk_list, signals)
+    signals = build_scoring_signals(canonical_list)
+    scored = score_chunks(chunk_list, signals)
 
     max_score = max((s for s, _, _ in scored), default=0)
     if max_score == 0:
-        logger.info("_select_candidate_chunks: ingen signal — springer LLM over")
+        logger.info("select_candidate_chunks: ingen signal — springer LLM over")
         return []
 
     score_by_idx = {i: s for s, i, _ in scored}
@@ -282,7 +282,7 @@ def _select_candidate_chunks(
         total_chars += len(chunk.text)
 
     logger.info(
-        f"_select_candidate_chunks: {len(result_chunks)}/{len(chunk_list)} chunks valgt, "
+        f"select_candidate_chunks: {len(result_chunks)}/{len(chunk_list)} chunks valgt, "
         f"{total_chars} tegn, max_score={max_score}"
     )
     for s, i, reasons in scored:
@@ -290,6 +290,12 @@ def _select_candidate_chunks(
             logger.debug(f"  chunk[{i}] score={s} reasons={reasons}")
 
     return result_chunks
+
+
+# Backwards-compatible aliases for existing imports/tests during migration.
+_build_scoring_signals = build_scoring_signals
+_score_chunks = score_chunks
+_select_candidate_chunks = select_candidate_chunks
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +428,7 @@ def enrich_canonical_list(
     logger.info("Fase 1: Scorer og filtrerer akt-chunks mod canonical-signaler")
     candidate_chunks_by_doc: dict[str, list[Chunk]] = {}
     for doc_id, chunk_list in akt_chunks_by_doc.items():
-        candidates = _select_candidate_chunks(chunk_list, canonical_list)
+        candidates = select_candidate_chunks(chunk_list, canonical_list)
         if candidates:
             candidate_chunks_by_doc[doc_id] = candidates
         else:

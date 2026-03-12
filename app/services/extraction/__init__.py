@@ -1,4 +1,9 @@
-from app.services.extraction.enricher import enrich_canonical_list
+from app.services.extraction.enricher import (
+    build_scoring_signals,
+    enrich_canonical_list,
+    score_chunks,
+    select_candidate_chunks,
+)
 from app.services.extraction.llm_extractor import (
     _build_chunks_text,
     _extract_document_servitutter,
@@ -36,5 +41,8 @@ __all__ = [
     "_parse_llm_response",
     "_prescreeen_chunks",
     "_servitut_matches",
+    "build_scoring_signals",
     "enrich_canonical_list",
+    "score_chunks",
+    "select_candidate_chunks",
 ]

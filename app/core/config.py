@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     EXTRACTION_MAX_CONCURRENCY: int = 4
     OCR_LANGUAGE: str = "dan+eng"
     OCR_DESKEW: bool = True
+    OCR_JOBS: int = 0
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

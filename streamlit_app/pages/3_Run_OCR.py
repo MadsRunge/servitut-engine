@@ -6,11 +6,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from app.services import case_service, storage_service
-from app.services.chunking_service import chunk_pages
-from app.services.document_classifier import classify_document
+from app.services import storage_service
 from app.models.document import Document
-from app.services.ocr_service import process_document, summarize_pages
+from app.services.ocr_service import format_pipeline_result_message, run_document_pipeline
 from streamlit_app.ui import (
     parse_status_label,
     render_case_banner,
@@ -20,12 +18,6 @@ from streamlit_app.ui import (
     select_case,
     setup_page,
 )
-
-
-def _preserve_known_document_type(document_type: str) -> str | None:
-    if document_type in {"akt", "tinglysningsattest"}:
-        return document_type
-    return None
 
 
 def _render_ocr_summary(placeholders: list, total_docs: int, done_docs: int) -> None:
@@ -84,34 +76,11 @@ def render_batch_snapshot(snapshot_ph, statuses: dict[str, tuple[str, str]]) -> 
 
 
 def run_ocr_for_document(case_id: str, doc: Document) -> tuple[bool, str]:
-    pdf_path = Path(doc.file_path)
-    ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc.document_id)
-
     try:
         doc.parse_status = "processing"
         storage_service.save_document(doc)
-
-        pages = process_document(pdf_path, doc.document_id, case_id, ocr_pdf_path)
-        storage_service.save_ocr_pages(case_id, doc.document_id, pages)
-
-        blank, low, _ = summarize_pages(pages)
-        chunks = chunk_pages(pages, doc.document_id, case_id)
-
-        doc.pages = pages
-        doc.page_count = len(pages)
-        doc.chunk_count = len(chunks)
-        doc.ocr_blank_pages = blank
-        doc.ocr_low_conf_pages = low
-        doc.document_type = classify_document(
-            doc.filename,
-            pages=pages,
-            requested_type=_preserve_known_document_type(doc.document_type),
-        )
-        doc.parse_status = "ocr_done"
-        storage_service.save_document(doc)
-
-        storage_service.save_chunks(case_id, doc.document_id, chunks)
-        return True, f"{len(pages)} sider, {len(chunks)} chunks"
+        result = run_document_pipeline(case_id, doc)
+        return True, format_pipeline_result_message(result)
     except Exception as exc:
         doc.parse_status = "error"
         storage_service.save_document(doc)
@@ -189,20 +158,20 @@ if batch_state:
             st.session_state["ocr_batch_feedback"] = (
                 "success",
                 f"Batch-OCR færdig. {done_count}/{len(docs)} dokumenter har nu OCR-status `ocr_done`.",
-            )
+        )
         _clear_batch_state(case.case_id)
         st.rerun()
+    else:
+        with st.spinner(f"Kører OCR på {next_doc.filename}..."):
+            ok, message = run_ocr_for_document(case.case_id, next_doc)
 
-    with st.spinner(f"Kører OCR på {next_doc.filename}..."):
-        ok, message = run_ocr_for_document(case.case_id, next_doc)
-
-    updated_state = deepcopy(batch_state)
-    updated_state["pending_doc_ids"] = [doc_id for doc_id in pending_ids if doc_id != next_doc.document_id]
-    if not ok:
-        failures.append(f"{next_doc.filename}: {message}")
-    updated_state["failures"] = failures
-    _set_batch_state(case.case_id, updated_state)
-    st.rerun()
+        updated_state = deepcopy(batch_state)
+        updated_state["pending_doc_ids"] = [doc_id for doc_id in pending_ids if doc_id != next_doc.document_id]
+        if not ok:
+            failures.append(f"{next_doc.filename}: {message}")
+        updated_state["failures"] = failures
+        _set_batch_state(case.case_id, updated_state)
+        st.rerun()
 
 if docs_to_process:
     actions_col1, actions_col2 = st.columns([2, 3])
@@ -263,7 +232,7 @@ for doc in docs:
             width="stretch",
             disabled=batch_running,
         ):
-            with st.spinner(f"OCR kører på {doc.filename} (ocrmypdf)..."):
+            with st.spinner(f"OCR kører på {doc.filename}..."):
                 ok, message = run_ocr_for_document(case.case_id, doc)
                 if ok:
                     st.success(f"OCR færdig: {message}")

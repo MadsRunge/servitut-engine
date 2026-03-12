@@ -5,16 +5,40 @@ Pipeline: original.pdf → ocrmypdf → ocr.pdf (PDF med tekstlag) → pdfplumbe
 
 Resten af systemet må kun kende PageData — ikke OCR-engine.
 """
+import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models.document import PageData
+from app.models.chunk import Chunk
+from app.models.document import Document, PageData
+from app.services import storage_service
+from app.services.chunking_service import chunk_pages
+from app.services.document_classifier import classify_document
 from app.utils.text import clean_text
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class OcrPipelineResult:
+    pages: List[PageData]
+    chunks: List[Chunk]
+    blank_pages: int
+    low_conf_pages: int
+    reused_ocr_pdf: bool
+    reused_pages: bool
+    reused_chunks: bool
+
+
+def _resolve_ocr_jobs() -> int:
+    configured_jobs = settings.OCR_JOBS
+    if configured_jobs and configured_jobs > 0:
+        return configured_jobs
+    return max(1, min(os.cpu_count() or 1, 4))
 
 
 def _estimate_confidence(text: str) -> float:
@@ -59,7 +83,7 @@ def run_ocrmypdf(pdf_path: Path, ocr_pdf_path: Path) -> None:
             deskew=settings.OCR_DESKEW,
             skip_text=True,
             progress_bar=False,
-            jobs=1,
+            jobs=_resolve_ocr_jobs(),
         )
     except ocrmypdf.exceptions.PriorOcrFoundError:
         # Dokumentet har allerede et fuldt tekstlag — brug original som OCR-output
@@ -111,3 +135,131 @@ def process_document(pdf_path: Path, doc_id: str, case_id: str, ocr_pdf_path: Pa
         f"OCR færdig: {len(pages)} sider | {blank} blanke | {low} lav-conf | doc={doc_id}"
     )
     return pages
+
+
+def _preserve_known_document_type(document_type: str) -> str | None:
+    if document_type in {"akt", "tinglysningsattest"}:
+        return document_type
+    return None
+
+
+def _artifact_is_fresh(artifact_path: Path, dependency_paths: list[Path]) -> bool:
+    if not artifact_path.exists():
+        return False
+
+    artifact_mtime = artifact_path.stat().st_mtime
+    for dependency_path in dependency_paths:
+        if not dependency_path.exists():
+            return False
+        if artifact_mtime < dependency_path.stat().st_mtime:
+            return False
+    return True
+
+
+def _load_or_create_pages(
+    case_id: str,
+    doc_id: str,
+    pdf_path: Path,
+    ocr_pdf_path: Path,
+    force: bool = False,
+) -> tuple[List[PageData], bool, bool]:
+    pages_path = storage_service.get_ocr_path(case_id, doc_id)
+    reused_ocr_pdf = not force and _artifact_is_fresh(ocr_pdf_path, [pdf_path])
+    reused_pages = (
+        not force and _artifact_is_fresh(pages_path, [pdf_path, ocr_pdf_path])
+    )
+
+    if reused_ocr_pdf:
+        logger.info("Genbruger eksisterende ocr.pdf for %s", doc_id)
+    else:
+        run_ocrmypdf(pdf_path, ocr_pdf_path)
+
+    if reused_pages:
+        logger.info("Genbruger eksisterende OCR-sider for %s", doc_id)
+        pages = storage_service.load_ocr_pages(case_id, doc_id)
+    else:
+        pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
+        storage_service.save_ocr_pages(case_id, doc_id, pages)
+
+    return pages, reused_ocr_pdf, reused_pages
+
+
+def _load_or_create_chunks(
+    case_id: str,
+    doc_id: str,
+    pages: List[PageData],
+    force: bool = False,
+) -> tuple[List[Chunk], bool]:
+    pages_path = storage_service.get_ocr_path(case_id, doc_id)
+    chunks_path = storage_service.get_chunks_path(case_id, doc_id)
+    reused_chunks = not force and _artifact_is_fresh(chunks_path, [pages_path])
+
+    if reused_chunks:
+        logger.info("Genbruger eksisterende chunks for %s", doc_id)
+        return storage_service.load_chunks(case_id, doc_id), True
+
+    chunks = chunk_pages(pages, doc_id, case_id)
+    storage_service.save_chunks(case_id, doc_id, chunks)
+    return chunks, False
+
+
+def run_document_pipeline(case_id: str, doc: Document, force: bool = False) -> OcrPipelineResult:
+    pdf_path = Path(doc.file_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF-fil ikke fundet på disk: {pdf_path}")
+
+    ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc.document_id)
+    pages, reused_ocr_pdf, reused_pages = _load_or_create_pages(
+        case_id=case_id,
+        doc_id=doc.document_id,
+        pdf_path=pdf_path,
+        ocr_pdf_path=ocr_pdf_path,
+        force=force,
+    )
+    chunks, reused_chunks = _load_or_create_chunks(
+        case_id=case_id,
+        doc_id=doc.document_id,
+        pages=pages,
+        force=force,
+    )
+
+    blank, low, _ = summarize_pages(pages)
+    doc.pages = pages
+    doc.page_count = len(pages)
+    doc.chunk_count = len(chunks)
+    doc.ocr_blank_pages = blank
+    doc.ocr_low_conf_pages = low
+    doc.document_type = classify_document(
+        doc.filename,
+        pages=pages,
+        requested_type=_preserve_known_document_type(doc.document_type),
+    )
+    doc.parse_status = "ocr_done"
+    storage_service.save_document(doc)
+
+    return OcrPipelineResult(
+        pages=pages,
+        chunks=chunks,
+        blank_pages=blank,
+        low_conf_pages=low,
+        reused_ocr_pdf=reused_ocr_pdf,
+        reused_pages=reused_pages,
+        reused_chunks=reused_chunks,
+    )
+
+
+def format_pipeline_result_message(result: OcrPipelineResult) -> str:
+    reused_parts = []
+    if result.reused_ocr_pdf:
+        reused_parts.append("ocr.pdf")
+    if result.reused_pages:
+        reused_parts.append("OCR-sider")
+    if result.reused_chunks:
+        reused_parts.append("chunks")
+
+    if reused_parts:
+        reuse_text = f"genbrugte {', '.join(reused_parts)}"
+    else:
+        reuse_text = "fuld OCR-kørsel"
+
+    return f"{len(result.pages)} sider, {len(result.chunks)} chunks ({reuse_text})"

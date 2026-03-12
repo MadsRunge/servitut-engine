@@ -3,19 +3,31 @@ Tests for OCR pipeline: process_document → List[PageData]
 
 OCRmyPDF og pdfplumber mockes — ingen rigtige PDF-filer kræves.
 """
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.models.document import PageData
+from app.core.config import settings
+from app.models.chunk import Chunk
+from app.models.document import Document, PageData
+from app.services import storage_service
 from app.services.ocr_service import (
     _estimate_confidence,
     extract_pages_from_ocr_pdf,
     process_document,
+    run_document_pipeline,
     summarize_pages,
 )
+
+
+@pytest.fixture
+def temp_storage(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
+    (tmp_path / "cases").mkdir()
+    return tmp_path
 
 
 # --- _estimate_confidence ---
@@ -123,6 +135,115 @@ def test_process_document_handles_prior_ocr(tmp_path):
 
     assert ocr_pdf_path.exists()
     assert len(pages) == 1
+
+
+def test_run_document_pipeline_builds_missing_artifacts(temp_storage):
+    case_id = "case-test"
+    doc_id = "doc-test"
+    pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    doc = Document(
+        document_id=doc_id,
+        case_id=case_id,
+        filename="akt.pdf",
+        file_path=str(pdf_path),
+        document_type="akt",
+    )
+
+    pages = [PageData(page_number=1, text="Servitut om vejret", confidence=0.9)]
+    chunks = [
+        Chunk(
+            chunk_id="chunk-1",
+            document_id=doc_id,
+            case_id=case_id,
+            page=1,
+            text="Servitut om vejret",
+            chunk_index=0,
+            char_start=0,
+            char_end=18,
+        )
+    ]
+
+    with patch("app.services.ocr_service.run_ocrmypdf") as mock_run_ocr:
+        with patch("app.services.ocr_service.extract_pages_from_ocr_pdf", return_value=pages):
+            with patch("app.services.ocr_service.chunk_pages", return_value=chunks):
+                result = run_document_pipeline(case_id, doc)
+
+    mock_run_ocr.assert_called_once()
+    assert result.reused_ocr_pdf is False
+    assert result.reused_pages is False
+    assert result.reused_chunks is False
+    assert doc.parse_status == "ocr_done"
+    assert doc.page_count == 1
+    assert doc.chunk_count == 1
+    assert storage_service.load_ocr_pages(case_id, doc_id)[0].text == "Servitut om vejret"
+    assert storage_service.load_chunks(case_id, doc_id)[0].text == "Servitut om vejret"
+
+
+def test_run_document_pipeline_reuses_fresh_artifacts(temp_storage):
+    case_id = "case-test"
+    doc_id = "doc-test"
+    pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    doc = Document(
+        document_id=doc_id,
+        case_id=case_id,
+        filename="akt.pdf",
+        file_path=str(pdf_path),
+        document_type="akt",
+    )
+
+    pages = [PageData(page_number=1, text="Eksisterende OCR", confidence=0.95)]
+    chunks = [
+        Chunk(
+            chunk_id="chunk-1",
+            document_id=doc_id,
+            case_id=case_id,
+            page=1,
+            text="Eksisterende OCR",
+            chunk_index=0,
+            char_start=0,
+            char_end=16,
+        )
+    ]
+
+    ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc_id)
+    ocr_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    ocr_pdf_path.write_bytes(b"%PDF-1.4 ocr")
+    storage_service.save_ocr_pages(case_id, doc_id, pages)
+    storage_service.save_chunks(case_id, doc_id, chunks)
+
+    original_ts = 1_000
+    ocr_ts = 1_100
+    pages_ts = 1_200
+    chunks_ts = 1_300
+    os.utime(pdf_path, (original_ts, original_ts))
+    os.utime(ocr_pdf_path, (ocr_ts, ocr_ts))
+    os.utime(storage_service.get_ocr_path(case_id, doc_id), (pages_ts, pages_ts))
+    os.utime(storage_service.get_chunks_path(case_id, doc_id), (chunks_ts, chunks_ts))
+
+    with patch("app.services.ocr_service.run_ocrmypdf", side_effect=AssertionError("ocrmypdf should not run")):
+        with patch(
+            "app.services.ocr_service.extract_pages_from_ocr_pdf",
+            side_effect=AssertionError("page extraction should not run"),
+        ):
+            with patch(
+                "app.services.ocr_service.chunk_pages",
+                side_effect=AssertionError("chunking should not run"),
+            ):
+                result = run_document_pipeline(case_id, doc)
+
+    assert result.reused_ocr_pdf is True
+    assert result.reused_pages is True
+    assert result.reused_chunks is True
+    assert doc.parse_status == "ocr_done"
+    assert doc.page_count == 1
+    assert doc.chunk_count == 1
+    assert doc.pages[0].text == "Eksisterende OCR"
 
 
 def test_summarize_pages_counts_blank_low_and_ok():

@@ -3,9 +3,10 @@ from datetime import date
 
 from app.core.config import settings
 from app.models.chunk import Chunk
+from app.models.document import Document
 from app.models.servitut import Servitut
 from app.services.extraction import llm_extractor
-from app.services.extraction.enricher import _select_candidate_chunks
+from app.services.extraction.enricher import select_candidate_chunks
 from app.services.extraction.merger import _enrich_canonical
 from app.services import extraction_service
 
@@ -298,6 +299,54 @@ def test_extract_document_servitutter_parses_structured_scope_fields():
     assert result[0].scope_source == "akt"
 
 
+def test_extract_canonical_from_attest_preloads_documents(monkeypatch):
+    chunks = [
+        make_chunk("doc-attest", page=1, text="attest side 1"),
+        make_chunk("doc-attest", page=2, text="attest side 2"),
+        make_chunk("doc-akt", page=1, text="akt side 1"),
+    ]
+    documents = [
+        Document(
+            document_id="doc-attest",
+            case_id="case-test",
+            filename="attest.pdf",
+            file_path="storage/cases/case-test/documents/doc-attest/original.pdf",
+            document_type="tinglysningsattest",
+        ),
+        Document(
+            document_id="doc-akt",
+            case_id="case-test",
+            filename="akt.pdf",
+            file_path="storage/cases/case-test/documents/doc-akt/original.pdf",
+            document_type="akt",
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.load_all_chunks",
+        lambda case_id: chunks,
+    )
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda case_id: documents,
+    )
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.load_document",
+        lambda case_id, doc_id: (_ for _ in ()).throw(AssertionError("N+1 load_document call")),
+    )
+
+    with patch(
+        "app.services.extraction_service._extract_from_doc_chunks",
+        return_value=[make_canonical("01.01.2000-1-1")],
+    ) as mock_extract:
+        result = extraction_service.extract_canonical_from_attest("case-test")
+
+    assert len(result) == 1
+    attest_by_doc = mock_extract.call_args.args[0]
+    assert list(attest_by_doc) == ["doc-attest"]
+    assert len(attest_by_doc["doc-attest"]) == 2
+
+
 def make_canonical(date_reference: str, akt_nr: str = None, title: str = "Test") -> Servitut:
     return Servitut(
         servitut_id="srv-canonical",
@@ -315,7 +364,7 @@ def test_select_candidate_chunks_scores_akt_nr():
     chunk_hit = make_chunk("doc-a", page=1, text="Se akt 40F439 vedr. byggelinje")
     chunk_miss = make_chunk("doc-a", page=2, text="Ingen relevante oplysninger her overhovedet")
 
-    result = _select_candidate_chunks([chunk_hit, chunk_miss], [canonical])
+    result = select_candidate_chunks([chunk_hit, chunk_miss], [canonical])
 
     assert chunk_hit in result
     # chunk_miss kan inkluderes som kontekstvindue (nabo), men chunk_hit skal altid med
@@ -331,7 +380,7 @@ def test_select_candidate_chunks_no_signal():
         for i in range(1, 4)
     ]
 
-    result = _select_candidate_chunks(chunks, [canonical])
+    result = select_candidate_chunks(chunks, [canonical])
 
     assert result == []
 
@@ -346,7 +395,7 @@ def test_select_candidate_chunks_context_window():
         make_chunk("doc-a", page=4, text="Fuldstændigt irrelevant xyz"),   # index 3 — ude af vindue
     ]
 
-    result = _select_candidate_chunks(chunks, [canonical], context_window=1)
+    result = select_candidate_chunks(chunks, [canonical], context_window=1)
 
     result_ids = [c.chunk_id for c in result]
     assert chunks[0].chunk_id in result_ids  # nabo før
@@ -365,7 +414,7 @@ def test_select_candidate_chunks_char_cap():
     # Sæt hit_chunk som nabo til de store chunks (context_window=1 → page2 inkluderes)
     all_chunks = [hit_chunk] + big_chunks
 
-    result = _select_candidate_chunks(all_chunks, [canonical], context_window=1)
+    result = select_candidate_chunks(all_chunks, [canonical], context_window=1)
 
     total_chars = sum(len(c.text) for c in result)
     assert total_chars <= 16_000

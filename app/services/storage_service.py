@@ -147,6 +147,10 @@ def _chunks_path(case_id: str, doc_id: str) -> Path:
     return _case_dir(case_id) / "chunks" / f"{doc_id}_chunks.json"
 
 
+def get_chunks_path(case_id: str, doc_id: str) -> Path:
+    return _chunks_path(case_id, doc_id)
+
+
 def save_chunks(case_id: str, doc_id: str, chunks: List[Chunk]) -> None:
     path = _chunks_path(case_id, doc_id)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
+from app.models.document import Document
 from app.models.servitut import Servitut
 from app.services.extraction import (
     ProgressCallback,
@@ -13,12 +14,23 @@ from app.services.extraction import (
 )
 from app.services import matrikel_service, storage_service
 from app.services.extraction.enricher import (
-    _build_scoring_signals,
-    _score_chunks,
-    _select_candidate_chunks,
+    build_scoring_signals,
+    score_chunks,
+    select_candidate_chunks,
 )
 
 logger = get_logger(__name__)
+
+
+def _load_documents_by_id(case_id: str, doc_ids: list[str]) -> dict[str, Document]:
+    requested = set(doc_ids)
+    if not requested:
+        return {}
+    return {
+        doc.document_id: doc
+        for doc in storage_service.list_documents(case_id)
+        if doc.document_id in requested
+    }
 
 
 def extract_servitutter(
@@ -42,9 +54,10 @@ def extract_servitutter(
 
     # Klassificér chunks efter dokumenttype
     doc_ids = list(dict.fromkeys(c.document_id for c in chunks))
+    documents_by_id = _load_documents_by_id(case_id, doc_ids)
     doc_types: dict[str, str] = {}
     for doc_id in doc_ids:
-        doc = storage_service.load_document(case_id, doc_id)
+        doc = documents_by_id.get(doc_id)
         doc_types[doc_id] = doc.document_type if doc else "akt"
 
     attest_chunks: list[Chunk] = []
@@ -106,7 +119,7 @@ def extract_servitutter(
 
     doc_filename_by_id: dict[str, str] = {}
     for doc_id in akt_by_doc:
-        doc = storage_service.load_document(case_id, doc_id)
+        doc = documents_by_id.get(doc_id)
         if doc and doc.filename:
             doc_filename_by_id[doc_id] = doc.filename
 
@@ -126,9 +139,13 @@ def extract_canonical_from_attest(
 ) -> List[Servitut]:
     """Kører kun Pas 1: udtræk canonical liste fra tinglysningsattest."""
     chunks = storage_service.load_all_chunks(case_id)
+    documents_by_id = _load_documents_by_id(
+        case_id,
+        list(dict.fromkeys(c.document_id for c in chunks)),
+    )
     attest_chunks: list[Chunk] = []
     for c in chunks:
-        doc = storage_service.load_document(case_id, c.document_id)
+        doc = documents_by_id.get(c.document_id)
         if doc and doc.document_type == "tinglysningsattest":
             attest_chunks.append(c)
     if not attest_chunks:
@@ -152,7 +169,7 @@ def score_akt_chunks_for_case(
     Returnerer per-dok scoring-resultat til visning i Streamlit.
     Hvert element indeholder metadata om chunks og hvilke der er valgt som kandidater.
     """
-    signals = _build_scoring_signals(canonical_list)
+    signals = build_scoring_signals(canonical_list)
     documents = {
         d.document_id: d
         for d in storage_service.list_documents(case_id)
@@ -163,8 +180,8 @@ def score_akt_chunks_for_case(
         chunks = storage_service.load_chunks(case_id, doc_id)
         if not chunks:
             continue
-        scored = _score_chunks(chunks, signals)
-        candidates = _select_candidate_chunks(chunks, canonical_list)
+        scored = score_chunks(chunks, signals)
+        candidates = select_candidate_chunks(chunks, canonical_list)
         candidate_ids = {c.chunk_id for c in candidates}
         max_score = max((s for s, _, _ in scored), default=0)
         chunk_details = [
