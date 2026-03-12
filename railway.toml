@@ -1,0 +1,18 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "./Dockerfile"
+
+[deploy]
+startCommand = "streamlit run streamlit_app/Home.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
+healthcheckPath = "/_stcore/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[deploy.envVars]
+STORAGE_DIR = "/app/storage"
+PROMPTS_DIR = "/app/prompts"
+MODEL = "claude-sonnet-4-6"
+OCR_LANGUAGE = "dan+eng"
+OCR_DESKEW = "true"
+OCR_JOBS = "2"
