@@ -23,7 +23,7 @@ COPY prompts/ ./prompts/
 
 RUN mkdir -p /app/storage
 
-CMD streamlit run streamlit_app/Home.py \
+CMD uv run streamlit run streamlit_app/Home.py \
     --server.port ${PORT:-8501} \
     --server.address 0.0.0.0 \
     --server.headless true
