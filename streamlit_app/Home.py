@@ -71,7 +71,7 @@ else:
             elif stats.reports == 0:
                 st.page_link("pages/8_Generate_Report.py", label="→ Generer redegørelse", icon="📄")
             else:
-                st.page_link("pages/9_Review.py", label="→ Review og sporbarhed", icon="🔎")
+                st.page_link("pages/9_Edit_Report.py", label="→ Redigér redegørelse", icon="✍️")
             st.caption(
                 f"{case.case_id} · oprettet {case.created_at:%Y-%m-%d %H:%M} · "
                 f"status {stats.case_status}"

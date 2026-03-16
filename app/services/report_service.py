@@ -8,6 +8,7 @@ from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Servitut
 from app.services.llm_service import generate_text
+from app.services.report_render_service import build_markdown_table
 from app.services.matrikel_service import filter_servitutter_for_target, resolve_matching_target_matrikler
 from app.services import storage_service
 from app.utils.ids import generate_report_id
@@ -106,38 +107,6 @@ def _build_report_entries(
             )
         )
     return entries
-
-
-def _escape_markdown_cell(value: object) -> str:
-    text = str(value or "—")
-    text = " ".join(text.splitlines()).strip()
-    return text.replace("|", "\\|")
-
-
-def _build_markdown_table(entries: List[ReportEntry]) -> str:
-    header = (
-        "| Nr. | Dato/løbenummer | Beskrivelse | Påtaleberettiget | "
-        "Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet |"
-    )
-    separator = "|-----|-----------------|-------------|------------------|-------------------|------------------------|---------------------|------------------------|"
-    rows = [
-        "| "
-        + " | ".join(
-            [
-                _escape_markdown_cell(entry.nr),
-                _escape_markdown_cell(entry.date_reference),
-                _escape_markdown_cell(entry.description),
-                _escape_markdown_cell(entry.beneficiary),
-                _escape_markdown_cell(entry.disposition),
-                _escape_markdown_cell(entry.legal_type),
-                _escape_markdown_cell(entry.action),
-                _escape_markdown_cell(entry.scope_detail or entry.scope),
-            ]
-        )
-        + " |"
-        for entry in entries
-    ]
-    return "\n".join([header, separator] + rows)
 
 
 def generate_report(
@@ -260,7 +229,7 @@ def generate_report(
                 )
             )
 
-    markdown_content = _build_markdown_table(entries) if entries else None
+    markdown_content = build_markdown_table(entries) if entries else None
 
     report = Report(
         report_id=report_id,

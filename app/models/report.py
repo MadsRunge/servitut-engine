@@ -22,6 +22,8 @@ class Report(BaseModel):
     report_id: str
     case_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    edited_at: Optional[datetime] = None
+    manually_edited: bool = False
     as_of_date: Optional[date] = None
     target_matrikler: List[str] = Field(default_factory=list)
     available_matrikler: List[str] = Field(default_factory=list)

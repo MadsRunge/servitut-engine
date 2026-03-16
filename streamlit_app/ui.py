@@ -21,7 +21,8 @@ PIPELINE_STEPS = [
     ("chunks", "6. Chunks"),
     ("extract", "7. Udtræk"),
     ("report", "8. Rapport"),
-    ("review", "9. Review"),
+    ("edit", "9. Redigér"),
+    ("review", "10. Review"),
 ]
 
 

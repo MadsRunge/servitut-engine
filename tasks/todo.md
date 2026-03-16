@@ -234,6 +234,24 @@
 - Upload-siden er ryddet tilbage til almindelig upload af tinglysningsattest og akter, med et link videre til split-siden for store filer
 - Verificeret med `uv run pytest tests/test_pdf_service.py tests/test_documents_api.py -q` (`7 passed`) og `uv run python -m py_compile streamlit_app/pages/2a_Split_PDF.py streamlit_app/pages/2_Upload_Documents.py streamlit_app/Home.py streamlit_app/ui.py app/services/pdf_service.py app/services/document_service.py app/api/routes/documents.py`
 
+## Report editor plan
+
+- [x] Afklar rapportflowet og placér manuel redigering som et særskilt trin efter rapportgenerering
+- [x] Udtræk delt rapport-rendering og tilføj helperlogik til at gemme redigerede rapportrækker tilbage på modellen
+- [x] Tilføj en separat Streamlit-side med stort redigeringsvindue til rapporttabellen og eksport af den redigerede version
+- [x] Opdatér navigation og workflow, så review ligger efter rapportredigering
+- [x] Verificér med fokuserede tests og syntakskontrol
+
+## Report editor review
+
+- Tilføjede delt rapport-rendering i `app/services/report_render_service.py`, så genererede og manuelt redigerede rapporter bruger samme markdown- og HTML-eksport
+- Tilføjede `app/services/report_editor_service.py`, som konverterer rapportposter til editor-rækker, sorterer efter prioritet (`nr`), renummererer og gemmer den opdaterede tabel tilbage på rapporten
+- Udvidede `Report`-modellen med `edited_at` og `manually_edited`, så manuelle rettelser kan spores
+- Tilføjede en ny side `streamlit_app/pages/9_Edit_Report.py`, hvor brugeren kan redigere hele rapporttabellen i et stort `data_editor`-vindue, gemme rettelser og eksportere den redigerede rapport
+- Flyttede review-siden til `streamlit_app/pages/10_Review.py` og opdaterede pipeline-navigationen, så redigering nu er trin 9 og review trin 10
+- Opdaterede rapportsiden og forsiden, så workflowet peger videre til redigering efter rapportgenerering
+- Verificeret med `uv run pytest tests/test_report_generation.py tests/test_report_editor_service.py -q` (`12 passed`) og `uv run python -m py_compile streamlit_app/pages/8_Generate_Report.py streamlit_app/pages/9_Edit_Report.py streamlit_app/pages/10_Review.py streamlit_app/Home.py streamlit_app/ui.py app/services/report_service.py app/services/report_render_service.py app/services/report_editor_service.py app/models/report.py`
+
 ## OCR performance optimization plan
 
 - [x] Gennemgå OCR-flowet og fastlæg hvor genkørsel og sekventielt arbejde koster unødigt meget tid

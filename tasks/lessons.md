@@ -6,3 +6,4 @@
 - When adding decorative Streamlit sidebar UI with custom HTML/CSS, isolate it with its own class scope and disable pointer interaction unless the element is meant to be clickable.
 - In Streamlit, treat `unsafe_allow_html=True` as fragile: escape all dynamic values and prefer native Markdown/widgets for progress and detail views to avoid DOM/layout corruption across reruns and expanders.
 - When a user asks for a distinct pre-processing step in the workflow, give it its own Streamlit page and navigation step instead of burying it inside an adjacent page.
+- When feedback refers to the final deliverable, map it to the exact workflow stage before implementing; post-generation editing belongs after report generation, not inside review or generic feedback docs.
