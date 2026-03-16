@@ -219,6 +219,21 @@
 - [x] Nulstil OCR- og chunk-artefakter for Aalborg uden at slette originale PDF-filer eller sagsmetadata
 - [x] Verificér at dokumentmetadata er sat tilbage til pre-OCR status og dokumentér resultatet
 
+## PDF split feature plan
+
+- [x] Kortlæg upload-flowet og design en minimal split-løsning til store PDF'er
+- [x] Tilføj en PDF-split-service med validering af sideintervaller og generering af PDF-dele
+- [x] Integrér split-flowet i Streamlit-upload-siden, så brugeren kan opdele og uploade del-PDF'er
+- [x] Verificér med fokuserede tests og dokumentér resultatet
+
+## PDF split feature review
+
+- Tilføjede `app/services/pdf_service.py` med sideoptælling, forslag til split-intervaller, validering af brugerens sideintervaller og generering af del-PDF'er via PyMuPDF
+- Tilføjede en delt dokument-oprettelseshelper i `app/services/document_service.py`, så API og Streamlit-sider bruger samme logik til at gemme PDF'er som sagsdokumenter
+- Split-flowet ligger nu på en separat Streamlit-side før upload, hvor brugeren kan uploade én PDF, se samlet sidetal, generere standardintervaller og gemme de valgte dele direkte som individuelle `akt`-dokumenter
+- Upload-siden er ryddet tilbage til almindelig upload af tinglysningsattest og akter, med et link videre til split-siden for store filer
+- Verificeret med `uv run pytest tests/test_pdf_service.py tests/test_documents_api.py -q` (`7 passed`) og `uv run python -m py_compile streamlit_app/pages/2a_Split_PDF.py streamlit_app/pages/2_Upload_Documents.py streamlit_app/Home.py streamlit_app/ui.py app/services/pdf_service.py app/services/document_service.py app/api/routes/documents.py`
+
 ## OCR performance optimization plan
 
 - [x] Gennemgå OCR-flowet og fastlæg hvor genkørsel og sekventielt arbejde koster unødigt meget tid

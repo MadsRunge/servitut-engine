@@ -14,13 +14,14 @@ from app.services import case_service, matrikel_service, storage_service
 PIPELINE_STEPS = [
     ("home", "Overblik"),
     ("create", "1. Opret sag"),
-    ("upload", "2. Upload"),
-    ("ocr", "3. OCR"),
-    ("pages", "4. Sider"),
-    ("chunks", "5. Chunks"),
-    ("extract", "6. Udtræk"),
-    ("report", "7. Rapport"),
-    ("review", "8. Review"),
+    ("split", "2. Opdel PDF"),
+    ("upload", "3. Upload"),
+    ("ocr", "4. OCR"),
+    ("pages", "5. Sider"),
+    ("chunks", "6. Chunks"),
+    ("extract", "7. Udtræk"),
+    ("report", "8. Rapport"),
+    ("review", "9. Review"),
 ]
 
 

@@ -1,4 +1,3 @@
-import shutil
 import sys
 from pathlib import Path
 
@@ -6,10 +5,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
-from app.models.document import Document
-from app.services import case_service, storage_service
+from app.services import storage_service
 from app.services.case_service import remove_document_from_case
-from app.utils.ids import generate_doc_id
+from app.services.document_service import create_document_from_bytes
 from streamlit_app.ui import (
     parse_status_label,
     render_case_banner,
@@ -31,23 +29,14 @@ render_case_banner(case)
 render_case_stats(case.case_id)
 
 
-def _save_uploaded_file(uploaded_file, case_id: str, document_type: str):
-    doc_id = generate_doc_id()
-    pdf_path = storage_service.get_document_pdf_path(case_id, doc_id)
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(pdf_path, "wb") as f:
-        shutil.copyfileobj(uploaded_file, f)
-    doc = Document(
-        document_id=doc_id,
-        case_id=case_id,
+def _save_uploaded_file(uploaded_file, case_id: str, document_type: str) -> str:
+    doc = create_document_from_bytes(
+        file_bytes=uploaded_file.getvalue(),
         filename=uploaded_file.name,
-        file_path=str(pdf_path),
+        case_id=case_id,
         document_type=document_type,
-        parse_status="pending",
     )
-    storage_service.save_document(doc)
-    case_service.add_document_to_case(case_id, doc_id)
-    return doc_id
+    return doc.document_id
 
 
 # --- Tinglysningsattest ---
@@ -78,6 +67,11 @@ else:
 render_section(
     "Akter",
     "Upload de individuelle akt-PDFer. Disse bruges til at berige servitutterne med fulde detaljer.",
+)
+st.page_link(
+    "pages/2a_Split_PDF.py",
+    label="→ Opdel en stor PDF først",
+    icon="✂️",
 )
 
 akt_files = st.file_uploader(

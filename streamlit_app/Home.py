@@ -26,7 +26,7 @@ cases = list_cases()
 if not cases:
     render_empty_state(
         "Ingen sager endnu",
-        "Start med at oprette en ny sag i trin 1. Derefter kan du uploade PDF’er og køre den fulde OCR-pipeline.",
+        "Start med at oprette en ny sag i trin 1. Derefter kan du opdele store PDF’er eller uploade dokumenter og køre den fulde OCR-pipeline.",
     )
 else:
     total_docs = 0
@@ -63,7 +63,7 @@ else:
             )
             # Næste-trin link baseret på pipeline-modenhed
             if stats.documents == 0:
-                st.page_link("pages/2_Upload_Documents.py", label="→ Upload dokumenter", icon="📎")
+                st.page_link("pages/2a_Split_PDF.py", label="→ Opdel stor PDF eller upload dokumenter", icon="✂️")
             elif stats.chunks == 0:
                 st.page_link("pages/3_Run_OCR.py", label="→ Kør OCR", icon="🔍")
             elif stats.servitutter == 0:

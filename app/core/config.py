@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     OCR_LANGUAGE: str = "dan+eng"
     OCR_DESKEW: bool = True
     OCR_JOBS: int = 0
+    OCR_BATCH_SIZE: int = 80
     APP_PIN: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
