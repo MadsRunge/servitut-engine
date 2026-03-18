@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -66,38 +68,68 @@ if not canonical_list:
         icon="ℹ️",
     )
 
-if col_canonical.button("Udtræk tinglysningsattest", type="primary", disabled=has_canonical):
-    _run_canonical = True
-elif col_rerun_canonical.button("Udtræk om igen", disabled=not has_canonical):
-    _run_canonical = True
-else:
-    _run_canonical = False
+_CA_THREAD = "canonical_thread"
+_CA_RESULT = "canonical_result"
+_CA_START  = "canonical_start"
+_CA_EVENTS = "canonical_events"
 
-if _run_canonical:
-    STAGE_ICON = {"queued": "⏳", "running": "⚙️", "requesting": "⚙️",
+_CA_STAGE_ICON = {"queued": "⏳", "running": "⚙️", "requesting": "⚙️",
                   "completed": "✅", "failed": "❌", "skipped": "⊘"}
-    doc_states: dict[str, dict] = {}
+
+if _CA_THREAD in st.session_state:
+    thread = st.session_state[_CA_THREAD]
+    elapsed = int(time.time() - st.session_state[_CA_START])
+    ca_events = st.session_state.get(_CA_EVENTS, [])
     status_ph = st.empty()
 
-    def _handle_attest_progress(event: dict) -> None:
-        doc_states[event["doc_id"]] = event
-        rows = []
-        for did, state in doc_states.items():
-            icon = STAGE_ICON.get(state["stage"], "⏳")
-            rows.append(f"- {icon} `{did}` — {state['message']}")
-        status_ph.markdown("\n".join(rows))
+    rows = [f"**Udtræk tinglysningsattest... {elapsed}s forløbet**"]
+    for e in ca_events:
+        icon = _CA_STAGE_ICON.get(e["stage"], "⏳")
+        rows.append(f"- {icon} `{e['doc_id']}` — {e.get('message', '')}")
+    status_ph.markdown("\n".join(rows))
 
-    with st.spinner("Udtræk tinglysningsattest..."):
-        try:
-            result = extract_canonical_from_attest(case_id, _handle_attest_progress)
+    if not thread.is_alive():
+        result, error = st.session_state.pop(_CA_RESULT, (None, "Ukendt fejl"))
+        st.session_state.pop(_CA_THREAD)
+        st.session_state.pop(_CA_START, None)
+        st.session_state.pop(_CA_EVENTS, None)
+        status_ph.empty()
+        if error:
+            st.error(f"Fejl under udtræk: {error}")
+        else:
             storage_service.save_canonical_list(case_id, result)
             st.session_state[canonical_key] = result
-            status_ph.empty()
             st.success(f"Udtræk færdigt — {len(result)} canonical servitutter fundet", icon="✅")
             st.rerun()
-        except Exception as e:
-            status_ph.empty()
-            st.error(f"Fejl under udtræk: {e}")
+    else:
+        time.sleep(1)
+        st.rerun()
+else:
+    _ca_running = False
+    if col_canonical.button("Udtræk tinglysningsattest", type="primary", disabled=has_canonical):
+        _ca_running = True
+    elif col_rerun_canonical.button("Udtræk om igen", disabled=not has_canonical):
+        _ca_running = True
+
+    if _ca_running:
+        st.session_state[_CA_EVENTS] = []
+
+        def _canonical_thread(c_id=case_id):
+            def _cb(event):
+                events = list(st.session_state.get(_CA_EVENTS, []))
+                events.append(event)
+                st.session_state[_CA_EVENTS] = events
+            try:
+                result = extract_canonical_from_attest(c_id, _cb)
+                st.session_state[_CA_RESULT] = (result, None)
+            except Exception as e:
+                st.session_state[_CA_RESULT] = (None, str(e))
+
+        t = threading.Thread(target=_canonical_thread, daemon=True)
+        st.session_state[_CA_THREAD] = t
+        st.session_state[_CA_START] = time.time()
+        t.start()
+        st.rerun()
 
 if canonical_list:
     st.caption(f"{len(canonical_list)} canonical servitutter fundet")
@@ -127,27 +159,51 @@ if scoring_key not in st.session_state:
     if stored is not None:
         st.session_state[scoring_key] = stored
 
+_SC_THREAD = "scoring_thread"
+_SC_RESULT = "scoring_result"
+_SC_START  = "scoring_start"
+
 run_disabled = not canonical_list
 has_results = scoring_key in st.session_state
 col_run, col_rerun = st.columns([2, 1])
-if col_run.button("Kør chunk-scoring", type="primary", disabled=run_disabled or has_results):
-    with st.spinner("Scorer chunks..."):
-        try:
-            results = score_akt_chunks_for_case(case_id, canonical_list)
+
+if _SC_THREAD in st.session_state:
+    thread = st.session_state[_SC_THREAD]
+    elapsed = int(time.time() - st.session_state[_SC_START])
+    st.info(f"Scorer chunks... **{elapsed}s** forløbet")
+    if not thread.is_alive():
+        results, error = st.session_state.pop(_SC_RESULT, (None, "Ukendt fejl"))
+        st.session_state.pop(_SC_THREAD)
+        st.session_state.pop(_SC_START, None)
+        if error:
+            st.error(f"Fejl under scoring: {error}")
+        else:
             storage_service.save_scoring_results(case_id, results)
             st.session_state[scoring_key] = results
             st.rerun()
-        except Exception as e:
-            st.error(f"Fejl under scoring: {e}")
-if col_rerun.button("Kør om igen", disabled=run_disabled or not has_results):
-    with st.spinner("Scorer chunks..."):
-        try:
-            results = score_akt_chunks_for_case(case_id, canonical_list)
-            storage_service.save_scoring_results(case_id, results)
-            st.session_state[scoring_key] = results
-            st.rerun()
-        except Exception as e:
-            st.error(f"Fejl under scoring: {e}")
+    else:
+        time.sleep(1)
+        st.rerun()
+else:
+    _sc_run = False
+    if col_run.button("Kør chunk-scoring", type="primary", disabled=run_disabled or has_results):
+        _sc_run = True
+    elif col_rerun.button("Kør om igen", disabled=run_disabled or not has_results):
+        _sc_run = True
+
+    if _sc_run:
+        def _scoring_thread(c_id=case_id, canon=canonical_list):
+            try:
+                results = score_akt_chunks_for_case(c_id, canon)
+                st.session_state[_SC_RESULT] = (results, None)
+            except Exception as e:
+                st.session_state[_SC_RESULT] = (None, str(e))
+
+        t = threading.Thread(target=_scoring_thread, daemon=True)
+        st.session_state[_SC_THREAD] = t
+        st.session_state[_SC_START] = time.time()
+        t.start()
+        st.rerun()
 
 scoring_results = st.session_state.get(scoring_key)
 

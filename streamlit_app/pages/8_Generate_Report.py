@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 from datetime import date
 from pathlib import Path
 import json
@@ -104,26 +106,45 @@ if not servitutter:
     st.warning("Ingen servitutter — kør ekstraktion først.")
     st.stop()
 
-if st.button("Generer redegørelse", type="primary"):
-    if not servitutter:
-        st.error("Ingen servitutter — kør ekstraktion først.")
+_RP_THREAD = "report_thread"
+_RP_RESULT = "report_result"
+_RP_START  = "report_start"
+
+if _RP_THREAD in st.session_state:
+    thread = st.session_state[_RP_THREAD]
+    elapsed = int(time.time() - st.session_state[_RP_START])
+    st.info(f"Genererer rapport... **{elapsed}s** forløbet")
+    if not thread.is_alive():
+        report, error = st.session_state.pop(_RP_RESULT, (None, "Ukendt fejl"))
+        st.session_state.pop(_RP_THREAD)
+        st.session_state.pop(_RP_START, None)
+        if error:
+            st.error(f"Fejl: {error}")
+        else:
+            storage_service.save_report(report)
+            st.success(f"Rapport genereret: `{report.report_id}`")
+            st.rerun()
     else:
-        all_chunks = storage_service.load_all_chunks(case.case_id)
-        with st.spinner("Genererer rapport..."):
-            try:
-                report = generate_report(
-                    servitutter,
-                    all_chunks,
-                    case.case_id,
-                    target_matrikler=selected_matrikler,
-                    available_matrikler=[m.matrikelnummer for m in case.matrikler],
-                    as_of_date=as_of_date,
-                )
-                storage_service.save_report(report)
-                st.success(f"Rapport genereret: `{report.report_id}`")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Fejl: {e}")
+        time.sleep(1)
+        st.rerun()
+elif st.button("Generer redegørelse", type="primary"):
+    all_chunks = storage_service.load_all_chunks(case.case_id)
+
+    def _report_thread(srvs=servitutter, chunks=all_chunks, c_id=case.case_id,
+                       tm=selected_matrikler, am=[m.matrikelnummer for m in case.matrikler],
+                       aod=as_of_date):
+        try:
+            r = generate_report(srvs, chunks, c_id,
+                                target_matrikler=tm, available_matrikler=am, as_of_date=aod)
+            st.session_state[_RP_RESULT] = (r, None)
+        except Exception as e:
+            st.session_state[_RP_RESULT] = (None, str(e))
+
+    t = threading.Thread(target=_report_thread, daemon=True)
+    st.session_state[_RP_THREAD] = t
+    st.session_state[_RP_START] = time.time()
+    t.start()
+    st.rerun()
 
 render_section("Gemte rapporter", "Tidligere redegørelser for den aktive sag.")
 reports = storage_service.list_reports(case.case_id)

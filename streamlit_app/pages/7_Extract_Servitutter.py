@@ -1,5 +1,7 @@
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -89,70 +91,78 @@ STAGE_ICON = {
     "skipped":   "⊘",
 }
 
-if st.button("Kør udtræk", type="primary", disabled=not all_chunks):
-    # Doc-count: attest tæller med hvis vi ikke har cache (Pas 1 kører)
-    tracked_doc_ids = set(c.document_id for c in all_chunks)
-    if cached_canonical:
-        # Attest-docs springes over i progress — tæl kun akt-docs
-        tracked_doc_ids = {
-            c.document_id for c in all_chunks
-            if doc_name.get(c.document_id, "") or True  # alle akt-docs
-        }
-        # Filtrer attest-doc ud fra tællingen
-        attest_doc_ids = {
-            d.document_id for d in documents
-            if d.document_type == "tinglysningsattest"
-        }
-        tracked_doc_ids -= attest_doc_ids
-    doc_count = len(tracked_doc_ids)
+_EX_THREAD   = "extract_thread"
+_EX_RESULT   = "extract_result"
+_EX_START    = "extract_start"
+_EX_EVENTS   = "extract_events"
+_EX_DOCCOUNT = "extract_doc_count"
 
-    doc_states: dict[str, dict] = {}
+if _EX_THREAD in st.session_state:
+    thread = st.session_state[_EX_THREAD]
+    elapsed = int(time.time() - st.session_state[_EX_START])
+    doc_count = st.session_state.get(_EX_DOCCOUNT, 1)
+    events = st.session_state.get(_EX_EVENTS, [])
+
+    completed = sum(1 for e in events if e["stage"] in {"completed", "failed", "skipped"})
     summary_ph = st.empty()
     progress_ph = st.empty()
     docs_ph = st.empty()
 
-    summary_ph.markdown(f"**Starter udtræk — 0 af {doc_count} færdige**")
-    progress_ph.progress(0.0)
-    docs_ph.caption("Klargør dokumentkø...")
-
-    def handle_progress(event: dict) -> None:
-        doc_id = event["doc_id"]
-        doc_states[doc_id] = event
-        completed = sum(
-            1 for s in doc_states.values()
-            if s["stage"] in {"completed", "failed", "skipped"}
-        )
-        summary_ph.markdown(f"**Behandler dokumenter — {completed} af {doc_count} færdige**")
-        progress_ph.progress(completed / doc_count if doc_count else 1.0)
-
+    summary_ph.markdown(
+        f"**Behandler dokumenter — {completed} af {doc_count} færdige · {elapsed}s forløbet**"
+    )
+    progress_ph.progress(completed / doc_count if doc_count else 1.0)
+    if events:
         rows = []
-        for did, state in doc_states.items():
-            icon = STAGE_ICON.get(state["stage"], "⏳")
-            name = doc_name.get(did, did)
-            typ = "Tinglysningsattest" if state["source_type"] == "tinglysningsattest" else "Akt"
-            msg = state.get("message", "")
-            rows.append(f"- {icon} **{name}** — {typ}: {msg}")
+        for e in events:
+            icon = STAGE_ICON.get(e["stage"], "⏳")
+            name = doc_name.get(e["doc_id"], e["doc_id"])
+            typ = "Tinglysningsattest" if e["source_type"] == "tinglysningsattest" else "Akt"
+            rows.append(f"- {icon} **{name}** — {typ}: {e.get('message', '')}")
         docs_ph.markdown("\n".join(rows))
 
-    try:
-        servitutter = extract_servitutter(
-            all_chunks,
-            case.case_id,
-            progress_callback=handle_progress,
-            cached_canonical=cached_canonical,
-        )
-        for srv in servitutter:
-            storage_service.save_servitut(srv)
-
-        summary_ph.empty()
-        progress_ph.empty()
-        docs_ph.empty()
-        st.success(f"Udtræk færdigt — {len(servitutter)} servitutter fundet", icon="✅")
+    if not thread.is_alive():
+        result, error = st.session_state.pop(_EX_RESULT, (None, "Ukendt fejl"))
+        st.session_state.pop(_EX_THREAD)
+        st.session_state.pop(_EX_START, None)
+        st.session_state.pop(_EX_EVENTS, None)
+        st.session_state.pop(_EX_DOCCOUNT, None)
+        if error:
+            st.error(f"Fejl under udtræk: {error}")
+        else:
+            for srv in result:
+                storage_service.save_servitut(srv)
+            st.success(f"Udtræk færdigt — {len(result)} servitutter fundet", icon="✅")
+            st.rerun()
+    else:
+        time.sleep(1)
         st.rerun()
-    except Exception as e:
-        progress_ph.empty()
-        docs_ph.empty()
-        summary_ph.error(f"Fejl under udtræk: {e}")
+
+elif st.button("Kør udtræk", type="primary", disabled=not all_chunks):
+    tracked_doc_ids = set(c.document_id for c in all_chunks)
+    attest_doc_ids = {d.document_id for d in documents if d.document_type == "tinglysningsattest"}
+    if cached_canonical:
+        tracked_doc_ids -= attest_doc_ids
+    doc_count = len(tracked_doc_ids)
+    st.session_state[_EX_DOCCOUNT] = doc_count
+    st.session_state[_EX_EVENTS] = []
+
+    def _extract_thread(c_id=case.case_id, chunks=all_chunks, canonical=cached_canonical):
+        def _cb(event):
+            events = list(st.session_state.get(_EX_EVENTS, []))
+            events.append(event)
+            st.session_state[_EX_EVENTS] = events
+        try:
+            result = extract_servitutter(chunks, c_id, progress_callback=_cb, cached_canonical=canonical)
+            st.session_state[_EX_RESULT] = (result, None)
+        except Exception as e:
+            st.session_state[_EX_RESULT] = (None, str(e))
+
+    t = threading.Thread(target=_extract_thread, daemon=True)
+    st.session_state[_EX_THREAD] = t
+    st.session_state[_EX_START] = time.time()
+    t.start()
+    st.rerun()
 
 
 # --- Servitut-liste ---
