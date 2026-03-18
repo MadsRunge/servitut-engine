@@ -12,6 +12,8 @@ class ReportEntry(BaseModel):
     disposition: Optional[str] = None
     legal_type: Optional[str] = None
     action: Optional[str] = None
+    title: Optional[str] = None
+    byggeri_markering: Optional[str] = None  # sort | orange | rød
     relevant_for_project: bool = False
     beneficiary_amt_warning: bool = False
     scope: Optional[str] = None  # "Ja" | "Nej" | "Måske"

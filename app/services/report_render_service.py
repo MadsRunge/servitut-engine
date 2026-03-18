@@ -13,16 +13,18 @@ def escape_markdown_cell(value: object) -> str:
 
 def build_markdown_table(entries: list[ReportEntry]) -> str:
     header = (
-        "| Nr. | Dato/løbenummer | Beskrivelse | Påtaleberettiget | "
+        "| Nr. | Dato/løbenummer | Titel | Byggeri | Beskrivelse | Påtaleberettiget | "
         "Rådighed/tilstand | Offentlig/privatretlig | Håndtering/Handling | Vedrører projektområdet |"
     )
-    divider = "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    divider = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     rows = [
         " | ".join(
             [
                 "|",
                 escape_markdown_cell(entry.nr),
                 escape_markdown_cell(entry.date_reference),
+                escape_markdown_cell(entry.title),
+                escape_markdown_cell(entry.byggeri_markering),
                 escape_markdown_cell(entry.description),
                 escape_markdown_cell(entry.beneficiary),
                 escape_markdown_cell(entry.disposition),
@@ -104,11 +106,24 @@ def build_html_report(report: Report, case) -> str:
             'title="Amtet er ophørt siden kommunalreformen 2007 — undersøg tilsvarende region">⚠ Amt → Region?</span>'
             if entry.beneficiary_amt_warning else ""
         )
+        byggeri_styles = {
+            "rød": ("background:#fde8e8;color:#b84c3d;border-color:rgba(184,76,61,0.3)", "rød"),
+            "orange": ("background:#fef3e2;color:#c96f2d;border-color:rgba(201,111,45,0.3)", "orange"),
+            "sort": ("background:#f4eee6;color:#665c54;border-color:#ddd2c6", "sort"),
+        }
+        bm = (entry.byggeri_markering or "").lower()
+        if bm in byggeri_styles:
+            bm_style, bm_label = byggeri_styles[bm]
+            byggeri_html = f'<span style="display:inline-flex;padding:3px 9px;border-radius:999px;font:700 11px/1.2 sans-serif;border:1px solid;{bm_style}">{bm_label}</span>'
+        else:
+            byggeri_html = "—"
         rows.append(
             f"""
             <tr class="{relevant_class}">
               <td>{entry.nr}</td>
               <td>{html.escape(entry.date_reference or "—")}</td>
+              <td>{html.escape(entry.title or "—")}</td>
+              <td>{byggeri_html}</td>
               <td>{raw_text_html}</td>
               <td>{html.escape(entry.description or "—")}</td>
               <td>{html.escape(entry.beneficiary or "—")}{amt_badge}</td>
@@ -125,20 +140,24 @@ def build_html_report(report: Report, case) -> str:
       <h2>Rapportposter</h2>
       <table>
         <colgroup>
-          <col style="width:4%">
-          <col style="width:9%">
-          <col style="width:21%">
-          <col style="width:21%">
-          <col style="width:9%">
-          <col style="width:9%">
-          <col style="width:9%">
-          <col style="width:10%">
+          <col style="width:3%">
           <col style="width:8%">
+          <col style="width:8%">
+          <col style="width:5%">
+          <col style="width:14%">
+          <col style="width:15%">
+          <col style="width:8%">
+          <col style="width:8%">
+          <col style="width:8%">
+          <col style="width:9%">
+          <col style="width:7%">
         </colgroup>
         <thead>
           <tr>
             <th>Nr.</th>
             <th>Dato/løbenummer</th>
+            <th>Titel</th>
+            <th>Byggeri</th>
             <th>Servituttens tekst</th>
             <th>Servituttens indhold</th>
             <th>Påtaleberettiget</th>
@@ -149,7 +168,7 @@ def build_html_report(report: Report, case) -> str:
           </tr>
         </thead>
         <tbody>
-          {''.join(rows) if rows else '<tr><td colspan="9">Ingen rapportposter</td></tr>'}
+          {''.join(rows) if rows else '<tr><td colspan="11">Ingen rapportposter</td></tr>'}
         </tbody>
       </table>
     </section>

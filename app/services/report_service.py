@@ -91,6 +91,8 @@ def _build_report_entries(
             ReportEntry(
                 nr=i,
                 date_reference=entry_data.get("date_reference"),
+                title=entry_data.get("title"),
+                byggeri_markering=entry_data.get("byggeri_markering"),
                 description=entry_data.get("description"),
                 beneficiary=entry_data.get("beneficiary"),
                 disposition=entry_data.get("disposition"),
@@ -266,6 +268,8 @@ def generate_report(
                 ReportEntry(
                     nr=i,
                     date_reference=srv.date_reference,
+                    title=srv.title,
+                    byggeri_markering=srv.byggeri_markering,
                     raw_text=_akt_raw_text(srv),
                     description=srv.summary,
                     beneficiary=srv.beneficiary,

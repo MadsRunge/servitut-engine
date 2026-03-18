@@ -14,6 +14,8 @@ def report_to_editor_rows(report: Report) -> list[dict[str, Any]]:
             {
                 "nr": entry.nr,
                 "date_reference": entry.date_reference or "",
+                "title": entry.title or "",
+                "byggeri_markering": entry.byggeri_markering or "",
                 "raw_text": entry.raw_text or "",
                 "description": entry.description or "",
                 "beneficiary": entry.beneficiary or "",
@@ -47,6 +49,8 @@ def update_report_from_editor(report: Report, rows: Any, notes: str | None = Non
             ReportEntry(
                 nr=index,
                 date_reference=_optional_str(row.get("date_reference")),
+                title=_optional_str(row.get("title")),
+                byggeri_markering=_optional_str(row.get("byggeri_markering")),
                 raw_text=_optional_str(row.get("raw_text")),
                 description=_optional_str(row.get("description")),
                 beneficiary=_optional_str(row.get("beneficiary")),

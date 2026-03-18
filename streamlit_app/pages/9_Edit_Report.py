@@ -88,13 +88,20 @@ notes_value = st.text_area(
 
 edited_rows = st.data_editor(
     editor_rows,
-    width="stretch",
+    use_container_width=True,
     hide_index=True,
     num_rows="fixed",
     disabled=["servitut_id"],
     column_config={
         "nr": st.column_config.NumberColumn("Prioritet", min_value=1, step=1, help="Rækker sorteres efter dette felt ved gem."),
         "date_reference": st.column_config.TextColumn("Dato / løbenr.", width="small"),
+        "title": st.column_config.TextColumn("Titel", width="medium"),
+        "byggeri_markering": st.column_config.SelectboxColumn(
+            "Byggeri",
+            options=["", "rød", "orange", "sort"],
+            width="small",
+            help="rød = direkte byggerelevans · orange = skal vurderes · sort = ingen byggerelevans",
+        ),
         "raw_text": st.column_config.TextColumn("Servituttens tekst", width="large"),
         "description": st.column_config.TextColumn("Servituttens indhold", width="large"),
         "beneficiary": st.column_config.TextColumn("Påtaleberettiget", width="medium"),
@@ -123,10 +130,10 @@ except Exception as exc:
     st.stop()
 
 save_col1, save_col2 = st.columns([2, 2])
-if save_col1.button("Gem ændringer på rapporten", type="primary", width="stretch"):
+if save_col1.button("Gem ændringer på rapporten", type="primary", use_container_width=True):
     saved_report = update_report_from_editor(report, edited_rows, notes=notes_value)
     storage_service.save_report(saved_report)
-    st.success(f"Rapport `{saved_report.report_id}` gemt med manuelle rettelser.")
+    st.toast(f"Rapport `{saved_report.report_id}` gemt med manuelle rettelser.", icon="✅")
     st.rerun()
 with save_col2:
     st.page_link("pages/10_Review.py", label="Gå til review og sporbarhed", icon="🔎")
