@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime
 import json
+import re
 from typing import List, Optional
 
 from app.core.config import settings
@@ -53,8 +54,6 @@ def _filter_servitutter_by_as_of_date(
 def _extract_json_object(text: str) -> dict:
     candidates = [text.strip()]
     if "```" in text:
-        import re
-
         fenced_blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
         candidates.extend(block.strip() for block in fenced_blocks if block.strip())
 
@@ -109,6 +108,54 @@ def _build_report_entries(
     return entries
 
 
+_AMT_REGEX = re.compile(r'\bamt\b', re.IGNORECASE)
+
+
+def _parse_date_reference(date_ref: Optional[str]) -> date:
+    """Returnerer date.max for None/ugyldige datoer → sorteres sidst."""
+    if not date_ref:
+        return date.max
+    try:
+        return datetime.strptime(date_ref[:10], "%d.%m.%Y").date()
+    except ValueError:
+        return date.max
+
+
+def _dedup_servitutter(servitutter: List[Servitut]) -> List[Servitut]:
+    """Fjern dubletter på date_reference (beholder første). None-keys deduplikeres aldrig."""
+    seen: dict[str, str] = {}
+    unique: List[Servitut] = []
+    for srv in servitutter:
+        if srv.date_reference is None:
+            unique.append(srv)
+            continue
+        if srv.date_reference not in seen:
+            seen[srv.date_reference] = srv.servitut_id
+            unique.append(srv)
+        else:
+            logger.warning(
+                f"Dedup: fjerner dublet {srv.servitut_id!r} "
+                f"(date_reference={srv.date_reference!r}, beholder={seen[srv.date_reference]!r})"
+            )
+    return unique
+
+
+def _apply_empty_field_fallbacks(entry: ReportEntry) -> ReportEntry:
+    updates: dict = {}
+    desc = (entry.description or "").strip()
+    if not desc:
+        updates["description"] = (
+            "Ukendt indhold"
+            if (entry.raw_text or "").strip()
+            else "Akt ikke gennemgået."
+        )
+    if not (entry.action or "").strip():
+        updates["action"] = "Kræver opslag i tingbogsakt"
+    if _AMT_REGEX.search(entry.beneficiary or ""):
+        updates["beneficiary_amt_warning"] = True
+    return entry.model_copy(update=updates) if updates else entry
+
+
 def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
@@ -128,6 +175,8 @@ def generate_report(
         target_matrikler,
         available_matrikler,
     )
+    filtered_servitutter = _dedup_servitutter(filtered_servitutter)
+    filtered_servitutter = sorted(filtered_servitutter, key=lambda s: _parse_date_reference(s.date_reference))
 
     _REPORT_FIELDS = {
         "servitut_id", "date_reference", "title", "summary", "beneficiary",
@@ -200,7 +249,8 @@ def generate_report(
                 raw_text = _akt_raw_text(srv)
                 if raw_text:
                     updates["raw_text"] = raw_text
-            entries.append(entry.model_copy(update=updates) if updates else entry)
+            enriched = entry.model_copy(update=updates) if updates else entry
+            entries.append(_apply_empty_field_fallbacks(enriched))
     except Exception as e:
         logger.error(f"Report generation error: {e}")
         # Fallback: build basic entries from servitutter
@@ -212,7 +262,7 @@ def generate_report(
             )
             matching = resolve_matching_target_matrikler(srv.applies_to_matrikler, target_matrikler)
             scope_detail = f"Vedr. matr.nr. {' og '.join(matching)}" if matching else None
-            entries.append(
+            entries.append(_apply_empty_field_fallbacks(
                 ReportEntry(
                     nr=i,
                     date_reference=srv.date_reference,
@@ -227,7 +277,10 @@ def generate_report(
                     scope_detail=scope_detail,
                     servitut_id=srv.servitut_id,
                 )
-            )
+            ))
+
+    entries = sorted(entries, key=lambda e: _parse_date_reference(e.date_reference))
+    entries = [e.model_copy(update={"nr": i}) for i, e in enumerate(entries, 1)]
 
     markdown_content = build_markdown_table(entries) if entries else None
 

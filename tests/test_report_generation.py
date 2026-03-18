@@ -221,6 +221,90 @@ def test_report_entry_model():
     assert entry.relevant_for_project is True
 
 
+def test_sort_oldest_first():
+    """Entries should be sorted by date_reference oldest-first."""
+    srv1 = make_mock_servitut(1)
+    srv1.date_reference = "15.06.1985-200-40"
+    srv1.summary = "Nyeste servitut"
+    srv2 = make_mock_servitut(2)
+    srv2.date_reference = "03.02.1957-490-40"
+    srv2.summary = "Ældste servitut"
+    srv3 = make_mock_servitut(3)
+    srv3.date_reference = "22.11.1970-100-40"
+    srv3.summary = "Midterste servitut"
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv1, srv2, srv3], make_mock_chunks(), "case-test")
+
+    assert report.servitutter[0].date_reference.startswith("03.02.1957")
+    assert report.servitutter[1].date_reference.startswith("22.11.1970")
+    assert report.servitutter[2].date_reference.startswith("15.06.1985")
+
+
+def test_dedup_removes_duplicate_date_reference():
+    """Two servitutter with the same date_reference → only one entry."""
+    srv1 = make_mock_servitut(1)
+    srv1.date_reference = "01.01.2000-123-40"
+    srv2 = make_mock_servitut(2)
+    srv2.date_reference = "01.01.2000-123-40"
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv1, srv2], make_mock_chunks(), "case-test")
+
+    assert len(report.servitutter) == 1
+
+
+def test_empty_description_no_raw_text():
+    """When description and raw_text are both empty, fallback text is 'Akt ikke gennemgået.'"""
+    srv = make_mock_servitut(1)
+    srv.summary = None
+    srv.evidence = []  # no raw_text
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv], make_mock_chunks(), "case-test")
+
+    assert report.servitutter[0].description == "Akt ikke gennemgået."
+
+
+def test_empty_action_fallback():
+    """When action_note is None, fallback is 'Kræver opslag i tingbogsakt'."""
+    srv = make_mock_servitut(1)
+    srv.action_note = None
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv], make_mock_chunks(), "case-test")
+
+    assert report.servitutter[0].action == "Kræver opslag i tingbogsakt"
+
+
+def test_amt_warning_set():
+    """Beneficiary containing 'amt' (case-insensitive) sets beneficiary_amt_warning=True."""
+    srv = make_mock_servitut(1)
+    srv.beneficiary = "Vejle Amt"
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv], make_mock_chunks(), "case-test")
+
+    assert report.servitutter[0].beneficiary_amt_warning is True
+
+
+def test_amt_warning_not_set():
+    """Beneficiary without 'amt' leaves beneficiary_amt_warning=False."""
+    srv = make_mock_servitut(1)
+    srv.beneficiary = "Kommunen"
+
+    with patch("app.services.report_service.generate_text") as mock_generate:
+        mock_generate.side_effect = Exception("Force fallback")
+        report = generate_report([srv], make_mock_chunks(), "case-test")
+
+    assert report.servitutter[0].beneficiary_amt_warning is False
+
+
 def test_report_model_serialization():
     report = Report(
         report_id="rep-test1234",

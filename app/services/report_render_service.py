@@ -99,6 +99,11 @@ def build_html_report(report: Report, case) -> str:
         relevant_class = {"Ja": "relevant-row", "Måske": "maybe-row", "Nej": ""}.get(scope, "")
         relevant_badge_class = {"Ja": "badge badge-relevant", "Måske": "badge badge-maybe", "Nej": "badge"}.get(scope, "badge")
         raw_text_html = f'<span style="font-size:12px;color:#665c54;font-style:italic">{html.escape(entry.raw_text)}</span>' if entry.raw_text else "—"
+        amt_badge = (
+            ' <span style="color:#c96f2d;font-weight:700;font-size:11px" '
+            'title="Amtet er ophørt siden kommunalreformen 2007 — undersøg tilsvarende region">⚠ Amt → Region?</span>'
+            if entry.beneficiary_amt_warning else ""
+        )
         rows.append(
             f"""
             <tr class="{relevant_class}">
@@ -106,7 +111,7 @@ def build_html_report(report: Report, case) -> str:
               <td>{html.escape(entry.date_reference or "—")}</td>
               <td>{raw_text_html}</td>
               <td>{html.escape(entry.description or "—")}</td>
-              <td>{html.escape(entry.beneficiary or "—")}</td>
+              <td>{html.escape(entry.beneficiary or "—")}{amt_badge}</td>
               <td>{html.escape(entry.disposition or "—")}</td>
               <td>{html.escape(entry.legal_type or "—")}</td>
               <td>{html.escape(entry.action or "—")}</td>
@@ -119,6 +124,17 @@ def build_html_report(report: Report, case) -> str:
     <section>
       <h2>Rapportposter</h2>
       <table>
+        <colgroup>
+          <col style="width:4%">
+          <col style="width:9%">
+          <col style="width:21%">
+          <col style="width:21%">
+          <col style="width:9%">
+          <col style="width:9%">
+          <col style="width:9%">
+          <col style="width:10%">
+          <col style="width:8%">
+        </colgroup>
         <thead>
           <tr>
             <th>Nr.</th>

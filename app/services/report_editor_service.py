@@ -23,6 +23,7 @@ def report_to_editor_rows(report: Report) -> list[dict[str, Any]]:
                 "scope": entry.scope or "",
                 "scope_detail": entry.scope_detail or "",
                 "relevant_for_project": entry.relevant_for_project,
+                "beneficiary_amt_warning": entry.beneficiary_amt_warning,
                 "servitut_id": entry.servitut_id,
             }
         )
@@ -53,6 +54,7 @@ def update_report_from_editor(report: Report, rows: Any, notes: str | None = Non
                 legal_type=_optional_str(row.get("legal_type")),
                 action=_optional_str(row.get("action")),
                 relevant_for_project=bool(row.get("relevant_for_project")),
+                beneficiary_amt_warning=bool(row.get("beneficiary_amt_warning", False)),
                 scope=_optional_str(row.get("scope")),
                 scope_detail=_optional_str(row.get("scope_detail")),
                 servitut_id=_required_servitut_id(row.get("servitut_id"), index),

@@ -95,7 +95,7 @@ edited_rows = st.data_editor(
     column_config={
         "nr": st.column_config.NumberColumn("Prioritet", min_value=1, step=1, help="Rækker sorteres efter dette felt ved gem."),
         "date_reference": st.column_config.TextColumn("Dato / løbenr.", width="small"),
-        "raw_text": st.column_config.TextColumn("Servituttens tekst", width="medium"),
+        "raw_text": st.column_config.TextColumn("Servituttens tekst", width="large"),
         "description": st.column_config.TextColumn("Servituttens indhold", width="large"),
         "beneficiary": st.column_config.TextColumn("Påtaleberettiget", width="medium"),
         "disposition": st.column_config.TextColumn("Rådighed / tilstand", width="medium"),
@@ -104,6 +104,10 @@ edited_rows = st.data_editor(
         "scope": st.column_config.SelectboxColumn("Vedrører projekt", options=["", "Ja", "Måske", "Nej"], width="small"),
         "scope_detail": st.column_config.TextColumn("Scope-detalje", width="medium"),
         "relevant_for_project": st.column_config.CheckboxColumn("Projektkritisk"),
+        "beneficiary_amt_warning": st.column_config.CheckboxColumn(
+            "Amt-advarsel",
+            help="Automatisk markeret hvis påtaleberettiget indeholder 'amt'. Fjern markeringen efter gennemgang.",
+        ),
         "servitut_id": st.column_config.TextColumn("Servitut-id", width="medium"),
     },
 )

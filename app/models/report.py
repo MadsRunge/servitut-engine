@@ -13,6 +13,7 @@ class ReportEntry(BaseModel):
     legal_type: Optional[str] = None
     action: Optional[str] = None
     relevant_for_project: bool = False
+    beneficiary_amt_warning: bool = False
     scope: Optional[str] = None  # "Ja" | "Nej" | "Måske"
     scope_detail: Optional[str] = None  # fx "Vedr. matr.nr. 1o og 1v"
     servitut_id: str

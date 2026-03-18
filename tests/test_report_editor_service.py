@@ -51,6 +51,18 @@ def test_report_to_editor_rows_includes_editable_fields():
     assert rows[1]["servitut_id"] == "srv-2"
 
 
+def test_amt_warning_survives_editor_roundtrip():
+    """beneficiary_amt_warning=True should be preserved through report_to_editor_rows → update_report_from_editor."""
+    report = _make_report()
+    report.servitutter[0].beneficiary_amt_warning = True
+
+    rows = report_to_editor_rows(report)
+    assert rows[0]["beneficiary_amt_warning"] is True
+
+    updated = update_report_from_editor(report.model_copy(deep=True), rows)
+    assert updated.servitutter[0].beneficiary_amt_warning is True
+
+
 def test_update_report_from_editor_sorts_and_rebuilds_markdown():
     report = _make_report()
     edited_rows = [
