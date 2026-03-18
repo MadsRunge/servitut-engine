@@ -12,7 +12,7 @@ from app.services import storage_service, tmv_browser_service
 from app.services.case_service import remove_document_from_case
 from app.services.document_service import create_document_from_bytes
 from app.services.tinglysning_import_service import import_downloaded_pdfs
-from app.models.tmv_job import ACTIVE_STATUSES
+from app.models.tmv_job import ACTIVE_STATUSES, TERMINAL_STATUSES
 from streamlit_app.ui import (
     parse_status_label,
     render_case_banner,
@@ -25,11 +25,9 @@ from streamlit_app.ui import (
 
 _STATUS_LABELS: dict[str, tuple[str, str]] = {
     "pending":               ("Starter job...", "⏳"),
-    "browser_started":       ("Browser åbnet", "🌐"),
-    "waiting_for_login":     ("Venter på MitID-login i browser-vinduet...", "🔐"),
-    "login_confirmed":       ("Login bekræftet", "✅"),
-    "searching_property":    ("Søger på ejendom...", "🔍"),
-    "listing_documents":     ("Henter dokumentliste...", "📋"),
+    "browser_started":       ("Browser åbnet — log ind med MitID og navigér til ejendommen", "🌐"),
+    "waiting_for_login":     ("Venter — log ind og navigér til ejendommen i browser-vinduet", "🔐"),
+    "listing_documents":     ("Åbner Servitutter og henter akt-links...", "📋"),
     "downloading_documents": ("Downloader PDF'er...", "⬇️"),
     "importing_documents":   ("Importerer til sag...", "📥"),
     "completed":             ("Færdig", "✅"),
@@ -96,6 +94,18 @@ if active_job and active_job.status in ACTIVE_STATUSES:
         age = (datetime.now(timezone.utc) - active_job.last_heartbeat_at).total_seconds()
         if age > 60:
             st.warning(f"Ingen aktivitet de seneste {int(age)}s — browseren er muligvis gået i stå.")
+
+    # "Klar til download"-knap vises kun mens vi venter på brugeren
+    if active_job.status == "waiting_for_login" and not active_job.user_ready:
+        st.markdown(
+            "**1.** Log ind med MitID i browser-vinduet  \n"
+            "**2.** Navigér til den rigtige ejendom i TMV  \n"
+            "**3.** Klik herunder når du er klar:"
+        )
+        if st.button("Klar til download", type="primary", use_container_width=True):
+            tmv_browser_service.signal_ready(case.case_id, active_job.job_id)
+            st.toast("Signal sendt — downloader nu...")
+            st.rerun()
 
     if active_job.downloaded_files:
         st.caption(f"Downloadede filer: {len(active_job.downloaded_files)}")

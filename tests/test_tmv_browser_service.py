@@ -190,6 +190,36 @@ def test_update_writes_status_and_heartbeat(mock_case, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# signal_ready
+# ---------------------------------------------------------------------------
+
+def test_signal_ready_sets_user_ready(mock_case, monkeypatch):
+    from app.services import storage_service, tmv_browser_service
+
+    job = TmvJob(
+        job_id="test-signal",
+        case_id=mock_case.case_id,
+        status="waiting_for_login",
+        started_at=datetime.now(timezone.utc),
+        download_dir="/tmp/test",
+    )
+    storage_service.save_tmv_job(job)
+
+    updated = tmv_browser_service.signal_ready(mock_case.case_id, "test-signal")
+    assert updated.user_ready is True
+
+    on_disk = storage_service.load_tmv_job(mock_case.case_id, "test-signal")
+    assert on_disk.user_ready is True
+
+
+def test_signal_ready_raises_for_unknown_job(mock_case, monkeypatch):
+    from app.services import tmv_browser_service
+
+    with pytest.raises(ValueError, match="Job ikke fundet"):
+        tmv_browser_service.signal_ready(mock_case.case_id, "ikke-eksisterende")
+
+
+# ---------------------------------------------------------------------------
 # Status-konstanter
 # ---------------------------------------------------------------------------
 

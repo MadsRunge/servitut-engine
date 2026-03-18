@@ -18,12 +18,12 @@ class TmvJob(BaseModel):
     skipped_count: int = 0
     error_message: Optional[str] = None
     import_result_summary: Optional[str] = None
+    user_ready: bool = False  # sættes True af Streamlit når brugeren er klar til download
 
 
 # Gyldige statusser (rækkefølge afspejler flowet):
-# pending → browser_started → waiting_for_login → login_confirmed
-# → searching_property → listing_documents → downloading_documents
-# → importing_documents → completed
+# pending → browser_started → waiting_for_login
+# → listing_documents → downloading_documents → importing_documents → completed
 # Terminaltilstande: completed | failed | cancelled
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -31,8 +31,6 @@ ACTIVE_STATUSES = {
     "pending",
     "browser_started",
     "waiting_for_login",
-    "login_confirmed",
-    "searching_property",
     "listing_documents",
     "downloading_documents",
     "importing_documents",

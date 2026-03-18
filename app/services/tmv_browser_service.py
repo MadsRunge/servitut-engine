@@ -1,17 +1,17 @@
 """
 TMV Playwright-browserservice.
 
-Starter et Playwright-browserjob der:
-1. Åbner TMV (https://www.tinglysning.dk/tmv/)
-2. Venter på at brugeren logger ind med MitID
-3. Søger på adresse (hvis angivet)
-4. Downloader PDF-filer via Playwright download-events
-5. Importerer via den eksisterende import_downloaded_pdfs-service
-
-Jobstatus skrives løbende til disk — Streamlit poller via get_job().
+Flow (baseret på Magnus's script):
+1. Åbner browser → brugeren logger ind med MitID og navigerer til ejendommen
+2. Brugeren klikker "Klar til download" i Streamlit (sætter job.user_ready = True)
+3. Servicen klikker på "Servitutter"-dropdown
+4. Finder alle a[href*='indskannetakt/rd/']-links
+5. Downloader hver fil og navngiver efter link-tekst
+6. Importerer via den eksisterende import_downloaded_pdfs-service
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -27,26 +27,14 @@ from app.services.tinglysning_import_service import import_downloaded_pdfs
 logger = get_logger(__name__)
 
 _TMV_URL = "https://www.tinglysning.dk/tmv/"
-_LOGIN_TIMEOUT_SECONDS = 300  # 5 min — giver tid til MitID
+_USER_READY_TIMEOUT_SECONDS = 600  # 10 min til login + navigation
 
-# Selektorer isoleret her så de kan verificeres og opdateres mod live TMV-DOM
-# uden at røre ved flowlogikken.
 _SELECTORS = {
-    # Tekst/element synligt KUN efter successfuldt login  TODO: verificér mod TMV
-    "login_success_indicator": "text=Log ud",
-    # URL-fragment der er tilstede PÅ login-siden  TODO: verificér mod TMV
-    "login_url_fragment": "/login",
-    # URL-fragment der er tilstede EFTER login  TODO: verificér mod TMV
-    "post_login_url_fragment": "/tmv/",
-    # Søgefelt til adresseindtastning  TODO: verificér mod TMV
-    "search_input": "input[placeholder*='adresse']",
-    # Submit-knap til søgning  TODO: verificér mod TMV
-    "search_button": "button[type='submit']",
-    # Links der peger på PDF-dokumenter i dokumentlisten  TODO: verificér mod TMV
-    "document_link": "a[href$='.pdf']",
+    # Dropdown-knap med alle servitutter  (verificeret via Magnus's script)
+    "servitutter_button": "button:has-text('Servitutter')",
+    # Direkte links til individuelle akter  (verificeret via Magnus's script)
+    "document_link": "a[href*='indskannetakt/rd/']",
 }
-
-_HEARTBEAT_INTERVAL = 10  # sekunder
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +85,24 @@ def latest_active_job(case_id: str) -> TmvJob | None:
 
 
 def cancel_job(case_id: str, job_id: str) -> TmvJob:
-    """Sætter jobstatus til 'cancelled'. Tråden opdager det ved næste heartbeat-check."""
+    """Sætter jobstatus til 'cancelled'. Tråden opdager det ved næste disk-check."""
     job = storage_service.load_tmv_job(case_id, job_id)
     if job is None:
         raise ValueError(f"Job ikke fundet: {job_id}")
     job.status = "cancelled"
+    storage_service.save_tmv_job(job)
+    return job
+
+
+def signal_ready(case_id: str, job_id: str) -> TmvJob:
+    """
+    Sæt user_ready = True — kaldes af Streamlit når brugeren er
+    logget ind og navigeret til ejendommen i TMV-browseren.
+    """
+    job = storage_service.load_tmv_job(case_id, job_id)
+    if job is None:
+        raise ValueError(f"Job ikke fundet: {job_id}")
+    job.user_ready = True
     storage_service.save_tmv_job(job)
     return job
 
@@ -121,9 +122,18 @@ def _update(job: TmvJob, status: str, **kwargs) -> TmvJob:
 
 
 def _is_cancelled(job: TmvJob) -> bool:
-    """Læser fra disk for at opdage annullering på tværs af tråde."""
     current = storage_service.load_tmv_job(job.case_id, job.job_id)
     return current is not None and current.status == "cancelled"
+
+
+def _is_user_ready(job: TmvJob) -> bool:
+    current = storage_service.load_tmv_job(job.case_id, job.job_id)
+    return current is not None and current.user_ready
+
+
+def _clean_name(name: str) -> str:
+    """Renser link-tekst til et gyldigt filnavn (samme logik som Magnus's script)."""
+    return re.sub(r'[<>:"/\\|?*]', "_", name).strip() or "fil"
 
 
 def _run_job(job: TmvJob, headless: bool) -> None:
@@ -151,104 +161,109 @@ def _execute(job: TmvJob, headless: bool) -> None:
 
     _update(job, "browser_started")
 
-    downloaded_paths: list[Path] = []
-
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
-
-        # Registrér download-events — bruges i stedet for filsystem-polling
-        pending_downloads: list = []
-
-        def _on_download(dl) -> None:
-            pending_downloads.append(dl)
-
-        page.on("download", _on_download)
         page.goto(_TMV_URL)
 
-        # --- Vent på MitID-login ---
+        # --- Vent på at brugeren er klar (login + navigation til ejendom) ---
         _update(job, "waiting_for_login")
+        logger.info(
+            f"TMV job {job.job_id[:8]}: venter på bruger-signal "
+            f"(maks {_USER_READY_TIMEOUT_SECONDS}s)"
+        )
 
-        deadline = time.time() + _LOGIN_TIMEOUT_SECONDS
+        deadline = time.time() + _USER_READY_TIMEOUT_SECONDS
         while time.time() < deadline:
             if _is_cancelled(job):
                 page.close()
                 browser.close()
                 return
-
-            # Heartbeat hvert 10. sekund
+            if _is_user_ready(job):
+                break
+            # Heartbeat
             job.last_heartbeat_at = datetime.now(timezone.utc)
             storage_service.save_tmv_job(job)
-
-            # Login-detektion: URL-skift væk fra login-fragment (primær strategi)
-            try:
-                current_url = page.url
-                not_on_login = _SELECTORS["login_url_fragment"] not in current_url
-                on_tmv = _SELECTORS["post_login_url_fragment"] in current_url
-                if not_on_login and on_tmv:
-                    break
-                # Fallback: tjek for login-success-element
-                if page.locator(_SELECTORS["login_success_indicator"]).count() > 0:
-                    break
-            except Exception:
-                pass  # Side loader stadig
-
             time.sleep(2)
         else:
             raise TimeoutError(
-                f"Login-timeout efter {_LOGIN_TIMEOUT_SECONDS}s — brugeren loggede ikke ind i tide."
+                f"Timeout efter {_USER_READY_TIMEOUT_SECONDS}s — "
+                "brugeren nåede ikke at signalere klar."
             )
 
-        _update(job, "login_confirmed")
+        logger.info(f"TMV job {job.job_id[:8]}: bruger-signal modtaget")
 
-        # --- Adressesøgning ---
-        _update(job, "searching_property")
-        if job.address:
-            try:
-                search_input = page.locator(_SELECTORS["search_input"])
-                search_input.wait_for(state="visible", timeout=15_000)
-                search_input.fill(job.address)
-                page.locator(_SELECTORS["search_button"]).click()
-                page.wait_for_load_state("networkidle", timeout=15_000)
-            except Exception as exc:
-                logger.warning(
-                    f"TMV job {job.job_id[:8]}: adressesøgning fejlede ({exc}) — "
-                    "brugeren navigerer manuelt"
-                )
-        else:
-            logger.info(f"TMV job {job.job_id[:8]}: ingen adresse — venter 10s på manuel navigation")
-            time.sleep(10)
-
-        # --- Find dokumentliste ---
+        # --- Klik på Servitutter-dropdown ---
         _update(job, "listing_documents")
         try:
-            page.wait_for_selector(_SELECTORS["document_link"], timeout=30_000)
+            servitutter_btn = page.locator(_SELECTORS["servitutter_button"]).first
+            servitutter_btn.click()
+            page.wait_for_timeout(2000)
         except Exception as exc:
-            logger.warning(f"TMV job {job.job_id[:8]}: ingen PDF-links fundet: {exc}")
+            raise RuntimeError(
+                f"Kunne ikke åbne Servitutter-dropdown: {exc}. "
+                "Er siden den rigtige TMV-ejendomsside?"
+            ) from exc
 
-        doc_links = page.locator(_SELECTORS["document_link"])
-        link_count = doc_links.count()
-        logger.info(f"TMV job {job.job_id[:8]}: {link_count} PDF-link(s) fundet")
+        # --- Find unikke PDF-links ---
+        links = page.locator(_SELECTORS["document_link"])
+        link_count = links.count()
+        logger.info(f"TMV job {job.job_id[:8]}: {link_count} akt-link(s) fundet")
 
-        # --- Download PDF'er ---
-        _update(job, "downloading_documents")
+        # Deduplikér på href (samme som Magnus's script)
+        unique_links: dict[str, dict] = {}
         for i in range(link_count):
+            try:
+                href = links.nth(i).get_attribute("href") or ""
+            except Exception:
+                continue
+            try:
+                text = links.nth(i).inner_text(timeout=1000).strip()
+            except Exception:
+                text = ""
+            if href and href not in unique_links:
+                unique_links[href] = {"text": text, "index": i}
+
+        logger.info(
+            f"TMV job {job.job_id[:8]}: {len(unique_links)} unikke akt-links efter dedup"
+        )
+
+        # --- Download ---
+        _update(job, "downloading_documents")
+        downloaded_paths: list[Path] = []
+
+        for nr, (href, info) in enumerate(unique_links.values(), start=1):
             if _is_cancelled(job):
                 break
+            text = info["text"] or f"akt_{nr}"
+            idx = info["index"]
+
+            filename = _clean_name(text)
+            if not filename.lower().endswith(".pdf"):
+                filename += ".pdf"
+            dest = download_dir / filename
+
+            if dest.exists():
+                logger.info(f"TMV job {job.job_id[:8]}: springer over (findes allerede): {filename}")
+                continue
+
             try:
-                with page.expect_download(timeout=30_000) as dl_info:
-                    doc_links.nth(i).click()
+                logger.info(f"TMV job {job.job_id[:8]}: downloader {nr}/{len(unique_links)}: {text}")
+                with page.expect_download(timeout=15_000) as dl_info:
+                    links.nth(idx).click()
                 dl = dl_info.value
-                dest = download_dir / (dl.suggested_filename or f"dok_{i + 1}.pdf")
                 dl.save_as(str(dest))
                 downloaded_paths.append(dest)
-                logger.info(f"TMV job {job.job_id[:8]}: downloaded {dest.name}")
+                logger.info(f"TMV job {job.job_id[:8]}: gemt {filename}")
+
                 job.last_heartbeat_at = datetime.now(timezone.utc)
                 job.downloaded_files = [str(p) for p in downloaded_paths]
                 storage_service.save_tmv_job(job)
+
+                page.wait_for_timeout(1000)
             except Exception as exc:
-                logger.warning(f"TMV job {job.job_id[:8]}: download {i + 1} fejlede: {exc}")
+                logger.warning(f"TMV job {job.job_id[:8]}: download fejlede for '{text}': {exc}")
 
         page.close()
         browser.close()
