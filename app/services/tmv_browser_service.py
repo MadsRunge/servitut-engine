@@ -1,13 +1,18 @@
 """
 TMV Playwright-browserservice.
 
-Flow (baseret på Magnus's script):
-1. Åbner browser → brugeren logger ind med MitID og navigerer til ejendommen
-2. Brugeren klikker "Klar til download" i Streamlit (sætter job.user_ready = True)
-3. Servicen klikker på "Servitutter"-dropdown
-4. Finder alle a[href*='indskannetakt/rd/']-links
-5. Downloader hver fil og navngiver efter link-tekst
-6. Importerer via den eksisterende import_downloaded_pdfs-service
+Fuldt automatiseret flow (efter MitID-login):
+1. Åbner browser → https://www.tinglysning.dk/tmv/foresporgsel
+2. Venter på MitID-login (URL-skift + "Log ud"-knap)
+3. Udfylder adresse automatisk fra sagen → klikker Søg
+4. Klikker første søgeresultat (navigerer til ejendommens side)
+5. Klikker "Servitutter"-dropdown
+6. Finder alle a[href*='indskannetakt/rd/']-links og downloader
+7. Importerer via import_downloaded_pdfs
+
+Fallback (hvis adresse mangler eller søgning fejler):
+→ Status sættes til waiting_for_login med status_detail besked
+→ Brugeren navigerer manuelt og klikker "Klar til download" i Streamlit
 """
 from __future__ import annotations
 
@@ -26,14 +31,27 @@ from app.services.tinglysning_import_service import import_downloaded_pdfs
 
 logger = get_logger(__name__)
 
-_TMV_URL = "https://www.tinglysning.dk/tmv/"
-_USER_READY_TIMEOUT_SECONDS = 600  # 10 min til login + navigation
+_TMV_URL = "https://www.tinglysning.dk/tmv/foresporgsel"
+_LOGIN_TIMEOUT_SECONDS = 300   # 5 min til MitID-login
+_USER_READY_TIMEOUT_SECONDS = 600  # 10 min til manuel navigation (fallback)
 
+# Verificerede selektorer (fra DOM-inspektion 2026-03-18)
 _SELECTORS = {
-    # Dropdown-knap med alle servitutter  (verificeret via Magnus's script)
-    "servitutter_button": "button:has-text('Servitutter')",
-    # Direkte links til individuelle akter  (verificeret via Magnus's script)
-    "document_link": "a[href*='indskannetakt/rd/']",
+    # Login-detektion: URL-fragment + knap der kun er synlig efter login
+    "post_login_url":       "/tmv/foresporgsel",
+    "login_success_button": "button:has-text('Log ud')",
+
+    # Adressesøgning (første søge-panel)
+    "address_input":        "[aria-label='Adresse']",
+    "search_button":        "button:has-text('Søg')",
+
+    # Søgeresultater: container der vises efter søgning
+    "result_container":     "app-f-result",
+    "result_first_link":    "app-f-result a",
+
+    # Ejendomsside — allerede verificeret via Magnus's script
+    "servitutter_button":   "button:has-text('Servitutter')",
+    "document_link":        "a[href*='indskannetakt/rd/']",
 }
 
 
@@ -72,12 +90,10 @@ def start_job(case_id: str, address: str | None, *, headless: bool = False) -> T
 
 
 def get_job(case_id: str, job_id: str) -> TmvJob | None:
-    """Læser jobstatus fra disk."""
     return storage_service.load_tmv_job(case_id, job_id)
 
 
 def latest_active_job(case_id: str) -> TmvJob | None:
-    """Returnerer det nyeste aktive (ikke-terminale) job for sagen, eller None."""
     for job in storage_service.list_tmv_jobs(case_id):
         if job.status in ACTIVE_STATUSES:
             return job
@@ -85,7 +101,6 @@ def latest_active_job(case_id: str) -> TmvJob | None:
 
 
 def cancel_job(case_id: str, job_id: str) -> TmvJob:
-    """Sætter jobstatus til 'cancelled'. Tråden opdager det ved næste disk-check."""
     job = storage_service.load_tmv_job(case_id, job_id)
     if job is None:
         raise ValueError(f"Job ikke fundet: {job_id}")
@@ -95,14 +110,12 @@ def cancel_job(case_id: str, job_id: str) -> TmvJob:
 
 
 def signal_ready(case_id: str, job_id: str) -> TmvJob:
-    """
-    Sæt user_ready = True — kaldes af Streamlit når brugeren er
-    logget ind og navigeret til ejendommen i TMV-browseren.
-    """
+    """Manuel fallback: sæt user_ready=True når brugeren er navigeret til ejendommen."""
     job = storage_service.load_tmv_job(case_id, job_id)
     if job is None:
         raise ValueError(f"Job ikke fundet: {job_id}")
     job.user_ready = True
+    job.status_detail = None
     storage_service.save_tmv_job(job)
     return job
 
@@ -132,7 +145,6 @@ def _is_user_ready(job: TmvJob) -> bool:
 
 
 def _clean_name(name: str) -> str:
-    """Renser link-tekst til et gyldigt filnavn (samme logik som Magnus's script)."""
     return re.sub(r'[<>:"/\\|?*]', "_", name).strip() or "fil"
 
 
@@ -167,51 +179,82 @@ def _execute(job: TmvJob, headless: bool) -> None:
         page = context.new_page()
         page.goto(_TMV_URL)
 
-        # --- Vent på at brugeren er klar (login + navigation til ejendom) ---
+        # ------------------------------------------------------------------
+        # Trin 1: Vent på MitID-login (automatisk detektion)
+        # ------------------------------------------------------------------
         _update(job, "waiting_for_login")
-        logger.info(
-            f"TMV job {job.job_id[:8]}: venter på bruger-signal "
-            f"(maks {_USER_READY_TIMEOUT_SECONDS}s)"
-        )
+        logger.info(f"TMV job {job.job_id[:8]}: venter på MitID-login (maks {_LOGIN_TIMEOUT_SECONDS}s)")
 
-        deadline = time.time() + _USER_READY_TIMEOUT_SECONDS
+        deadline = time.time() + _LOGIN_TIMEOUT_SECONDS
         while time.time() < deadline:
             if _is_cancelled(job):
-                page.close()
-                browser.close()
-                return
-            if _is_user_ready(job):
-                break
-            # Heartbeat
+                page.close(); browser.close(); return
+
             job.last_heartbeat_at = datetime.now(timezone.utc)
             storage_service.save_tmv_job(job)
+
+            try:
+                on_foresporgsel = _SELECTORS["post_login_url"] in page.url
+                log_ud_visible = page.locator(_SELECTORS["login_success_button"]).count() > 0
+                if on_foresporgsel and log_ud_visible:
+                    break
+            except Exception:
+                pass
             time.sleep(2)
         else:
-            raise TimeoutError(
-                f"Timeout efter {_USER_READY_TIMEOUT_SECONDS}s — "
-                "brugeren nåede ikke at signalere klar."
+            raise TimeoutError(f"Login-timeout efter {_LOGIN_TIMEOUT_SECONDS}s")
+
+        _update(job, "login_confirmed")
+
+        # ------------------------------------------------------------------
+        # Trin 2: Automatisk adressesøgning (eller manuel fallback)
+        # ------------------------------------------------------------------
+        if job.address:
+            try:
+                _search_and_select_property(job, page)
+            except Exception as exc:
+                logger.warning(
+                    f"TMV job {job.job_id[:8]}: auto-navigation fejlede ({exc}) "
+                    "— falder tilbage til manuel navigation"
+                )
+                _update(
+                    job,
+                    "waiting_for_login",
+                    status_detail=(
+                        f"Adressesøgning fejlede: {exc}. "
+                        "Navigér manuelt til ejendommen og klik 'Klar til download'."
+                    ),
+                )
+                _wait_for_user_ready(job, page)
+        else:
+            _update(
+                job,
+                "waiting_for_login",
+                status_detail="Sagen har ingen adresse. Navigér manuelt til ejendommen og klik 'Klar til download'.",
             )
+            _wait_for_user_ready(job, page)
 
-        logger.info(f"TMV job {job.job_id[:8]}: bruger-signal modtaget")
+        if _is_cancelled(job):
+            page.close(); browser.close(); return
 
-        # --- Klik på Servitutter-dropdown ---
+        # ------------------------------------------------------------------
+        # Trin 3: Klik Servitutter + download (Magnus's flow)
+        # ------------------------------------------------------------------
         _update(job, "listing_documents")
         try:
-            servitutter_btn = page.locator(_SELECTORS["servitutter_button"]).first
-            servitutter_btn.click()
+            page.locator(_SELECTORS["servitutter_button"]).first.click()
             page.wait_for_timeout(2000)
         except Exception as exc:
             raise RuntimeError(
                 f"Kunne ikke åbne Servitutter-dropdown: {exc}. "
-                "Er siden den rigtige TMV-ejendomsside?"
+                "Er siden den rigtige ejendomsside i TMV?"
             ) from exc
 
-        # --- Find unikke PDF-links ---
         links = page.locator(_SELECTORS["document_link"])
         link_count = links.count()
         logger.info(f"TMV job {job.job_id[:8]}: {link_count} akt-link(s) fundet")
 
-        # Deduplikér på href (samme som Magnus's script)
+        # Deduplikér på href
         unique_links: dict[str, dict] = {}
         for i in range(link_count):
             try:
@@ -225,11 +268,8 @@ def _execute(job: TmvJob, headless: bool) -> None:
             if href and href not in unique_links:
                 unique_links[href] = {"text": text, "index": i}
 
-        logger.info(
-            f"TMV job {job.job_id[:8]}: {len(unique_links)} unikke akt-links efter dedup"
-        )
+        logger.info(f"TMV job {job.job_id[:8]}: {len(unique_links)} unikke akt-links")
 
-        # --- Download ---
         _update(job, "downloading_documents")
         downloaded_paths: list[Path] = []
 
@@ -245,7 +285,7 @@ def _execute(job: TmvJob, headless: bool) -> None:
             dest = download_dir / filename
 
             if dest.exists():
-                logger.info(f"TMV job {job.job_id[:8]}: springer over (findes allerede): {filename}")
+                logger.info(f"TMV job {job.job_id[:8]}: springer over (findes): {filename}")
                 continue
 
             try:
@@ -255,12 +295,9 @@ def _execute(job: TmvJob, headless: bool) -> None:
                 dl = dl_info.value
                 dl.save_as(str(dest))
                 downloaded_paths.append(dest)
-                logger.info(f"TMV job {job.job_id[:8]}: gemt {filename}")
-
                 job.last_heartbeat_at = datetime.now(timezone.utc)
                 job.downloaded_files = [str(p) for p in downloaded_paths]
                 storage_service.save_tmv_job(job)
-
                 page.wait_for_timeout(1000)
             except Exception as exc:
                 logger.warning(f"TMV job {job.job_id[:8]}: download fejlede for '{text}': {exc}")
@@ -268,7 +305,9 @@ def _execute(job: TmvJob, headless: bool) -> None:
         page.close()
         browser.close()
 
-    # --- Importér via eksisterende service ---
+    # ------------------------------------------------------------------
+    # Trin 4: Importér via eksisterende service
+    # ------------------------------------------------------------------
     _update(job, "importing_documents", downloaded_files=[str(p) for p in downloaded_paths])
 
     if downloaded_paths:
@@ -287,3 +326,54 @@ def _execute(job: TmvJob, headless: bool) -> None:
         )
     else:
         _update(job, "completed", import_result_summary="Ingen PDF'er blev downloadet.")
+
+
+# ---------------------------------------------------------------------------
+# Hjælpefunktioner
+# ---------------------------------------------------------------------------
+
+def _search_and_select_property(job: TmvJob, page) -> None:
+    """Udfyld adresse, submit søgning, klik første resultat."""
+    _update(job, "searching_property")
+    logger.info(f"TMV job {job.job_id[:8]}: søger på '{job.address}'")
+
+    # Udfyld adressefeltet
+    address_input = page.locator(_SELECTORS["address_input"])
+    address_input.wait_for(state="visible", timeout=10_000)
+    address_input.clear()
+    address_input.fill(job.address)
+
+    # Klik første Søg-knap (den ved Adresse-feltet)
+    page.locator(_SELECTORS["search_button"]).first.click()
+
+    # Vent på at app-f-result dukker op
+    _update(job, "selecting_property")
+    result_container = page.locator(_SELECTORS["result_container"])
+    result_container.wait_for(state="visible", timeout=15_000)
+
+    # Klik første resultatlink
+    first_link = page.locator(_SELECTORS["result_first_link"]).first
+    first_link.wait_for(state="visible", timeout=10_000)
+    first_link.click()
+
+    # Vent på at ejendomssiden er klar (Servitutter-knap synlig)
+    page.locator(_SELECTORS["servitutter_button"]).first.wait_for(
+        state="visible", timeout=15_000
+    )
+    logger.info(f"TMV job {job.job_id[:8]}: ejendomsside klar")
+
+
+def _wait_for_user_ready(job: TmvJob, page) -> None:
+    """Manuel fallback: poll disk for user_ready=True."""
+    logger.info(f"TMV job {job.job_id[:8]}: venter på manuel bruger-signal (maks {_USER_READY_TIMEOUT_SECONDS}s)")
+    deadline = time.time() + _USER_READY_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        if _is_cancelled(job):
+            return
+        if _is_user_ready(job):
+            logger.info(f"TMV job {job.job_id[:8]}: manuel signal modtaget")
+            return
+        job.last_heartbeat_at = datetime.now(timezone.utc)
+        storage_service.save_tmv_job(job)
+        time.sleep(2)
+    raise TimeoutError(f"Timeout efter {_USER_READY_TIMEOUT_SECONDS}s — ingen bruger-signal.")

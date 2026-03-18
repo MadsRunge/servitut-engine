@@ -25,8 +25,11 @@ from streamlit_app.ui import (
 
 _STATUS_LABELS: dict[str, tuple[str, str]] = {
     "pending":               ("Starter job...", "⏳"),
-    "browser_started":       ("Browser åbnet — log ind med MitID og navigér til ejendommen", "🌐"),
-    "waiting_for_login":     ("Venter — log ind og navigér til ejendommen i browser-vinduet", "🔐"),
+    "browser_started":       ("Browser åbnet — log ind med MitID", "🌐"),
+    "waiting_for_login":     ("Venter på MitID-login...", "🔐"),
+    "login_confirmed":       ("Login bekræftet — søger på adresse...", "✅"),
+    "searching_property":    ("Søger på adresse i TMV...", "🔍"),
+    "selecting_property":    ("Navigerer til ejendomsside...", "🏠"),
     "listing_documents":     ("Åbner Servitutter og henter akt-links...", "📋"),
     "downloading_documents": ("Downloader PDF'er...", "⬇️"),
     "importing_documents":   ("Importerer til sag...", "📥"),
@@ -95,16 +98,25 @@ if active_job and active_job.status in ACTIVE_STATUSES:
         if age > 60:
             st.warning(f"Ingen aktivitet de seneste {int(age)}s — browseren er muligvis gået i stå.")
 
-    # "Klar til download"-knap vises kun mens vi venter på brugeren
+    # Vis status_detail hvis den er sat (bruges ved fallback)
+    if active_job.status_detail:
+        st.warning(active_job.status_detail)
+
+    # "Klar til download"-knap: kun som fallback ved waiting_for_login
+    # (enten ingen adresse, eller adressesøgning fejlede)
     if active_job.status == "waiting_for_login" and not active_job.user_ready:
-        st.markdown(
-            "**1.** Log ind med MitID i browser-vinduet  \n"
-            "**2.** Navigér til den rigtige ejendom i TMV  \n"
-            "**3.** Klik herunder når du er klar:"
-        )
-        if st.button("Klar til download", type="primary", use_container_width=True):
+        if active_job.status_detail:
+            # Fallback efter fejlet auto-søgning
+            st.markdown(
+                "**1.** Navigér manuelt til ejendommen i browser-vinduet  \n"
+                "**2.** Klik herunder når du er klar:"
+            )
+        else:
+            # Første gang — login ikke bekræftet endnu (polling)
+            st.caption("Logger du ind med MitID i browser-vinduet, fortsætter flowet automatisk.")
+        if st.button("Klar til download (manuel)", use_container_width=True):
             tmv_browser_service.signal_ready(case.case_id, active_job.job_id)
-            st.toast("Signal sendt — downloader nu...")
+            st.toast("Signal sendt — fortsætter...")
             st.rerun()
 
     if active_job.downloaded_files:
