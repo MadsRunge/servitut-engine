@@ -41,6 +41,34 @@ _TITLE_STOPWORDS = {
     "prioritet", "pantegæld", "forud",
 }
 
+_SCORING_RULE_META = {
+    "akt_nr": {
+        "label": "Akt nr.",
+        "weight": _SCORE_AKT_NR,
+        "description": "Eksakt match på normaliseret aktnummer",
+    },
+    "date_ref": {
+        "label": "Løbenummer / dato",
+        "weight": _SCORE_DATE_REF,
+        "description": "Match på hele tinglysningsdatoen med løbenummer",
+    },
+    "lob_suffix": {
+        "label": "Løbenummer-suffix",
+        "weight": _SCORE_LOB_SUFFIX,
+        "description": "Match på løbenummer-suffix fra date_reference",
+    },
+    "matrikel": {
+        "label": "Matrikel",
+        "weight": _SCORE_MATRIKEL,
+        "description": "Match på matrikelhenvisning fra attestens scope",
+    },
+    "title_word": {
+        "label": "Titelord",
+        "weight": _SCORE_TITLE_WORD,
+        "description": "Match på lange nøgleord fra canonical-titlen",
+    },
+}
+
 
 def _resolve_extraction_provider() -> str | None:
     if settings.EXTRACTION_LLM_PROVIDER.strip():
@@ -61,6 +89,165 @@ def _resolve_extraction_model() -> str | None:
 def _normalize_akt_nr(akt_nr: str) -> str:
     """Strip spaces, hyphens and lowercase — used for fuzzy akt_nr comparison."""
     return re.sub(r"[\s\-]", "", akt_nr).lower()
+
+
+def get_chunk_scoring_rules(context_window: int = 1) -> dict:
+    return {
+        "signal_weights": [
+            {
+                "signal_type": signal_type,
+                "label": meta["label"],
+                "weight": meta["weight"],
+                "description": meta["description"],
+            }
+            for signal_type, meta in _SCORING_RULE_META.items()
+        ],
+        "minimum_score": _MIN_SCORE_INCLUDE,
+        "context_window": context_window,
+        "max_candidate_chunks": _MAX_CANDIDATE_CHUNKS,
+        "max_candidate_chars": _MAX_CANDIDATE_CHARS,
+    }
+
+
+def _canonical_ref_summary(servitut: Servitut) -> dict:
+    return {
+        "date_reference": servitut.date_reference or "—",
+        "title": servitut.title or "—",
+        "akt_nr": servitut.akt_nr or "—",
+        "applies_to_matrikler": list(servitut.applies_to_matrikler or []),
+        "raw_matrikel_references": list(servitut.raw_matrikel_references or []),
+        "raw_scope_text": servitut.raw_scope_text or "—",
+    }
+
+
+def _add_signal_catalog_entry(
+    catalog: dict[str, dict],
+    signal_type: str,
+    normalized_value: str,
+    display_value: str,
+    servitut: Servitut,
+) -> None:
+    if not normalized_value:
+        return
+
+    key = f"{signal_type}:{normalized_value}"
+    meta = _SCORING_RULE_META[signal_type]
+    entry = catalog.setdefault(
+        key,
+        {
+            "signal_key": key,
+            "signal_type": signal_type,
+            "label": meta["label"],
+            "weight": meta["weight"],
+            "description": meta["description"],
+            "normalized_value": normalized_value,
+            "display_values": [],
+            "canonical_refs": [],
+        },
+    )
+    if display_value and display_value not in entry["display_values"]:
+        entry["display_values"].append(display_value)
+    ref_summary = _canonical_ref_summary(servitut)
+    if ref_summary not in entry["canonical_refs"]:
+        entry["canonical_refs"].append(ref_summary)
+
+
+def build_scoring_signal_catalog(canonical_list: List[Servitut]) -> dict[str, dict]:
+    catalog: dict[str, dict] = {}
+    for servitut in canonical_list:
+        if servitut.akt_nr:
+            normalized = _normalize_akt_nr(servitut.akt_nr)
+            _add_signal_catalog_entry(catalog, "akt_nr", normalized, servitut.akt_nr, servitut)
+
+        if servitut.date_reference:
+            normalized_date = re.sub(r"[\s.\-]", "", servitut.date_reference).lower()
+            _add_signal_catalog_entry(
+                catalog,
+                "date_ref",
+                normalized_date,
+                servitut.date_reference,
+                servitut,
+            )
+            comps = _extract_date_components(servitut.date_reference)
+            lob = comps.get("løbenummer_suffix")
+            if lob:
+                normalized_lob = re.sub(r"[\s.\-]", "", lob).lower()
+                _add_signal_catalog_entry(catalog, "lob_suffix", normalized_lob, lob, servitut)
+
+        for matrikel in (servitut.applies_to_matrikler or []):
+            if matrikel:
+                _add_signal_catalog_entry(
+                    catalog,
+                    "matrikel",
+                    matrikel.lower(),
+                    matrikel.lower(),
+                    servitut,
+                )
+
+        if servitut.title:
+            for word in servitut.title.lower().split():
+                word_clean = re.sub(r"[^\w]", "", word)
+                if len(word_clean) >= 6 and word_clean not in _TITLE_STOPWORDS:
+                    _add_signal_catalog_entry(
+                        catalog,
+                        "title_word",
+                        word_clean,
+                        word_clean,
+                        servitut,
+                    )
+    return catalog
+
+
+def describe_scoring_inputs(canonical_list: List[Servitut]) -> dict:
+    catalog = build_scoring_signal_catalog(canonical_list)
+    signal_groups = []
+    for signal_type, meta in _SCORING_RULE_META.items():
+        entries = sorted(
+            (entry for entry in catalog.values() if entry["signal_type"] == signal_type),
+            key=lambda entry: (entry["normalized_value"], entry["display_values"]),
+        )
+        signal_groups.append(
+            {
+                "signal_type": signal_type,
+                "label": meta["label"],
+                "weight": meta["weight"],
+                "description": meta["description"],
+                "count": len(entries),
+                "signals": entries,
+            }
+        )
+
+    canonical_rows = []
+    for servitut in canonical_list:
+        derived_signals = []
+        for entry in catalog.values():
+            if _canonical_ref_summary(servitut) in entry["canonical_refs"]:
+                derived_signals.append(
+                    {
+                        "signal_type": entry["signal_type"],
+                        "label": entry["label"],
+                        "weight": entry["weight"],
+                        "values": entry["display_values"],
+                    }
+                )
+        canonical_rows.append(
+            {
+                "date_reference": servitut.date_reference or "—",
+                "title": servitut.title or "—",
+                "akt_nr": servitut.akt_nr or "—",
+                "applies_to_matrikler": list(servitut.applies_to_matrikler or []),
+                "raw_matrikel_references": list(servitut.raw_matrikel_references or []),
+                "raw_scope_text": servitut.raw_scope_text or "—",
+                "derived_signals": derived_signals,
+            }
+        )
+
+    return {
+        "rules": get_chunk_scoring_rules(),
+        "signal_groups": signal_groups,
+        "canonical_rows": canonical_rows,
+        "signal_lookup": catalog,
+    }
 
 
 def _find_relevant_chunks(
@@ -185,24 +372,81 @@ def build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]]
         "matrikel": set(),
         "title_word": set(),
     }
-    for s in canonical_list:
-        if s.akt_nr:
-            signals["akt_nr"].add(_normalize_akt_nr(s.akt_nr))
-        if s.date_reference:
-            signals["date_ref"].add(re.sub(r"[\s.\-]", "", s.date_reference).lower())
-            comps = _extract_date_components(s.date_reference)
-            lob = comps.get("løbenummer_suffix")
-            if lob:
-                signals["lob_suffix"].add(re.sub(r"[\s.\-]", "", lob).lower())
-        for m in (s.applies_to_matrikler or []):
-            if m:
-                signals["matrikel"].add(m.lower())
-        if s.title:
-            for word in s.title.lower().split():
-                word_clean = re.sub(r"[^\w]", "", word)
-                if len(word_clean) >= 6 and word_clean not in _TITLE_STOPWORDS:
-                    signals["title_word"].add(word_clean)
+    for entry in build_scoring_signal_catalog(canonical_list).values():
+        signals[entry["signal_type"]].add(entry["normalized_value"])
     return signals
+
+
+def analyze_candidate_selection(
+    chunk_list: List[Chunk],
+    canonical_list: List[Servitut],
+    context_window: int = 1,
+) -> dict:
+    signals = build_scoring_signals(canonical_list)
+    scored = score_chunks(chunk_list, signals)
+    max_score = max((score for score, _, _ in scored), default=0)
+
+    if max_score == 0:
+        return {
+            "signals": signals,
+            "scored": scored,
+            "max_score": 0,
+            "hit_indices": set(),
+            "context_indices": set(),
+            "selected_indices": [],
+            "candidate_cap_excluded_indices": [],
+            "char_cap_excluded_indices": [],
+            "score_by_idx": {i: score for score, i, _ in scored},
+            "reasons_by_idx": {i: reasons for score, i, reasons in scored},
+            "rank_by_idx": {},
+            "context_sources": {},
+            "selected_char_count": 0,
+        }
+
+    score_by_idx = {i: score for score, i, _ in scored}
+    reasons_by_idx = {i: reasons for score, i, reasons in scored}
+    hit_indices = {i for score, i, _ in scored if score >= _MIN_SCORE_INCLUDE}
+
+    context_indices: set[int] = set()
+    context_sources: dict[int, list[int]] = {}
+    for hit_idx in hit_indices:
+        for idx in range(max(0, hit_idx - context_window), min(len(chunk_list), hit_idx + context_window + 1)):
+            context_indices.add(idx)
+            context_sources.setdefault(idx, [])
+            if hit_idx not in context_sources[idx]:
+                context_sources[idx].append(hit_idx)
+
+    sorted_by_score = sorted(context_indices, key=lambda idx: score_by_idx.get(idx, 0), reverse=True)
+    rank_by_idx = {idx: rank + 1 for rank, idx in enumerate(sorted_by_score)}
+    candidate_cap_excluded = sorted(sorted_by_score[_MAX_CANDIDATE_CHUNKS:])
+    top_indices = sorted(sorted_by_score[:_MAX_CANDIDATE_CHUNKS])
+
+    selected_indices: list[int] = []
+    char_cap_excluded: list[int] = []
+    total_chars = 0
+    for idx in top_indices:
+        chunk = chunk_list[idx]
+        if total_chars + len(chunk.text) > _MAX_CANDIDATE_CHARS:
+            char_cap_excluded = top_indices[top_indices.index(idx):]
+            break
+        selected_indices.append(idx)
+        total_chars += len(chunk.text)
+
+    return {
+        "signals": signals,
+        "scored": scored,
+        "max_score": max_score,
+        "hit_indices": hit_indices,
+        "context_indices": context_indices,
+        "selected_indices": selected_indices,
+        "candidate_cap_excluded_indices": candidate_cap_excluded,
+        "char_cap_excluded_indices": char_cap_excluded,
+        "score_by_idx": score_by_idx,
+        "reasons_by_idx": reasons_by_idx,
+        "rank_by_idx": rank_by_idx,
+        "context_sources": context_sources,
+        "selected_char_count": total_chars,
+    }
 
 
 def score_chunks(
@@ -251,41 +495,19 @@ def select_candidate_chunks(
     Score chunks mod canonical-signaler og returner top-N kandidater med kontekstvinduer.
     Returnerer tom liste hvis ingen chunks har tilstrækkelig signal (→ skip LLM-kald).
     """
-    signals = build_scoring_signals(canonical_list)
-    scored = score_chunks(chunk_list, signals)
-
-    max_score = max((s for s, _, _ in scored), default=0)
+    analysis = analyze_candidate_selection(chunk_list, canonical_list, context_window=context_window)
+    max_score = analysis["max_score"]
     if max_score == 0:
         logger.info("select_candidate_chunks: ingen signal — springer LLM over")
         return []
-
-    score_by_idx = {i: s for s, i, _ in scored}
-    hit_indices = {i for s, i, _ in scored if s >= _MIN_SCORE_INCLUDE}
-
-    with_context: set[int] = set()
-    for i in hit_indices:
-        for j in range(max(0, i - context_window), min(len(chunk_list), i + context_window + 1)):
-            with_context.add(j)
-
-    # Cap: sorter efter score desc, tag top 12, sorter tilbage til dokumentrækkefølge
-    sorted_by_score = sorted(with_context, key=lambda i: score_by_idx.get(i, 0), reverse=True)
-    top_indices = sorted(sorted_by_score[:_MAX_CANDIDATE_CHUNKS])
-
-    # Anvend tegnloft i dokumentrækkefølge
-    result_chunks: list[Chunk] = []
-    total_chars = 0
-    for i in top_indices:
-        chunk = chunk_list[i]
-        if total_chars + len(chunk.text) > _MAX_CANDIDATE_CHARS:
-            break
-        result_chunks.append(chunk)
-        total_chars += len(chunk.text)
+    result_chunks = [chunk_list[idx] for idx in analysis["selected_indices"]]
+    total_chars = analysis["selected_char_count"]
 
     logger.info(
         f"select_candidate_chunks: {len(result_chunks)}/{len(chunk_list)} chunks valgt, "
         f"{total_chars} tegn, max_score={max_score}"
     )
-    for s, i, reasons in scored:
+    for s, i, reasons in analysis["scored"]:
         if s > 0:
             logger.debug(f"  chunk[{i}] score={s} reasons={reasons}")
 

@@ -1,3 +1,68 @@
+## Filter chunks transparency plan
+
+- [x] Kortlæg hvilke canonical felter fra tinglysningsattesten der faktisk bruges i chunk-scoring, og hvilke der i dag er skjult i UI
+- [x] Redesign Sektion A på filter-siden, så attestens konkrete filtergrundlag vises menneskeligt: løbenummer, aktnr., titel, matrikelhenvisninger, scope-tekst og afledte scoringssignaler
+- [x] Redesign Sektion B, så hvert akt-dokument viser hele beslutningskæden: hits, scoreløse kontekst-chunks, fravalg, caps og endelig payload til LLM
+- [x] Afgør om scoringsservicen skal udvides med signal-provenance pr. chunk, så UI kan forklare hvilke konkrete canonical poster der udløste et hit
+- [x] Prioritér implementeringen i små trin med lav risiko: copy/UI først, derefter bedre resultatskema, derefter eventuel serviceudvidelse
+
+## Filter chunks transparency review
+
+- `streamlit_app/pages/6_Filter_Chunks.py` viser i dag kun canonical-tabellen med `date_reference`, `title` og `akt_nr`, selv om scoringen også bruger matrikelreferencer, løbenummer-suffix og titelord
+- Siden forklarer ikke selektionsreglerne fra `app/services/extraction/enricher.py`: `akt_nr=10`, `date_ref=5`, `løbenummer-suffix=3`, `matrikel=2`, `titelord=1`, minimumscore `2`, kontekstvindue `1`, max `12` chunks og max `16.000` tegn
+- Resultatvisningen er misvisende, fordi `score_akt_chunks_for_case()` kun eksponerer `chunk_details` for chunks med score `> 0`; scoreløse nabo-chunks kan derfor blive sendt til LLM uden at være synlige på siden
+- `reasons` vises som rå tokens som `akt_nr:40f439`, men uden kobling til hvilken canonical servitut eller hvilken attestlinje signalet stammer fra
+- Den største strukturelle begrænsning er, at `build_scoring_signals()` samler signaler i globale sets uden provenance; derfor kan UI'et ikke i dag forklare "denne chunk blev valgt pga. servitut X i attesten"
+- Anbefalet plan er at starte med transparens i copy og layout, derefter udvide resultatmodellen til at vise hele kandidatpakken, og først derefter evt. ændre scoringsservicen for at bære canonical provenance
+
+## Filter chunks transparency implementation plan
+
+- [x] Udvid scoringsresultatet med komplette chunk-beslutninger, så også scoreløse kontekst-chunks og caps bliver synlige i UI
+- [x] Eksponér afledte scoringssignaler fra canonical-listen, så brugeren kan se hvad der konkret filtreres på fra tinglysningsattesten
+- [x] Redesign `Filter Chunks`-siden med forklarende copy, signaloversigt og tydelig dokumentgennemgang af hits, valgt payload og fravalg
+- [x] Tilføj regressionstests for den nye scoringsstruktur og gennemsigtighed omkring valgte chunks
+- [x] Verificér ændringen og dokumentér resultatet i review-sektionen
+
+## Filter chunks transparency implementation review
+
+- `app/services/extraction/enricher.py` bærer nu både scoringsregler, signal-katalog og analyse af candidate-selection, så UI'et kan se hvilke konkrete signaler og caps der var i spil
+- `app/services/extraction_service.py` returnerer nu et rigere beslutningsspor pr. dokument, inkl. `selection_summary`, menneskelige labels, signal-provenance og scoreløse kontekst-chunks som faktisk sendes til LLM
+- `streamlit_app/pages/6_Filter_Chunks.py` er redesignet til to tydelige spørgsmål: hvad filtrerer vi på fra attesten, og hvad sendes videre fra hver akt
+- Siden viser nu de rå attestfelter, afledte signaler, vægte, caps, samlet payload til LLM og et dokument-for-dokument beslutningsspor med forklaring og provenance
+- Tilføjede regressionstests i `tests/test_extraction_service.py` for både signal-inputs og synlighed af scoreløse kontekst-chunks
+- Verificeret med `uv run pytest tests/test_extraction_service.py -q` (`18 passed`) og `uv run python -m py_compile streamlit_app/pages/6_Filter_Chunks.py app/services/extraction_service.py app/services/extraction/enricher.py`
+
+## TMV docs plan
+
+- [x] Beskriv den nuværende TMV-importløsning præcist i en ny markdown-fil under `docs/`
+- [x] Dokumentér de tekniske begrænsninger ved manuel browser/login-session og lokal import
+- [x] Beskriv migrationen til en Playwright-styret løsning med trinvis implementeringsplan, arkitektur og risici
+- [x] Review dokumentet for præcision og læg en kort review-note i `tasks/todo.md`
+
+## TMV docs review
+
+- Oprettede `docs/tmv-import-og-playwright-roadmap.md` med en præcis beskrivelse af det nuværende TMV-importflow på upload-siden
+- Dokumentet forklarer eksplicit hvorfor en manuel TMV-/MitID-browserfane ikke kan overtages sikkert af Servitut Engine
+- Dokumentet beskriver løsning 2 som et Playwright-flow, hvor brugeren stadig logger ind med MitID, men hvor resten af browser-sessionen automatiseres
+- Roadmappet dækker anbefalet arkitektur, servicekontrakt, faseopdeling, jobstatus, risici, sikkerhed og teststrategi
+
+## Tinglysning import flow plan
+
+- [x] Kortlæg upload-sidens nuværende dokumentflow og afgræns hvad der kan automatiseres sikkert
+- [x] Byg en lokal importservice, der finder nye PDF-filer i en download-mappe og kun importerer unikke filer til den aktive sag
+- [x] Udvid upload-siden med et TMV-flow: åbn link, marker download-start, og importér nye PDF'er direkte til dokumentbiblioteket
+- [x] Dæk importflowet med regressionstests for tidsfilter, deduplikering og sagstilknytning
+- [x] Verificér ændringen med fokuserede tests og dokumentér begrænsningerne i review-sektionen
+
+## Tinglysning import flow review
+
+- Upload-siden har nu et TMV-flow med tre trin: marker download-start, åbn `https://www.tinglysning.dk/tmv/`, og importér nye PDF'er fra en lokal download-mappe
+- Importen læser kun PDF-filer nyere end den gemte download-markør og deduplikerer både mod eksisterende dokumenter i sagen og dubletter i samme importbatch
+- Importerede filer oprettes som almindelige sagsdokumenter via den eksisterende dokumentservice, så de lander direkte i dokumentbiblioteket og indgår i det normale OCR-flow
+- Tilføjede `TINGLYSNING_DOWNLOAD_DIR` som konfigurerbar standardmappe for lokal import; default er `~/Downloads`
+- Begrænsning: løsningen kan ikke overtage en aktiv MitID-/TMV-session i en anden browser-fane, så selve downloadet skal stadig udløses af brugeren i TMV
+- Verificeret med `uv run pytest tests/test_tinglysning_import_service.py tests/test_documents_api.py -q` (`5 passed`) og `uv run python -m py_compile streamlit_app/pages/2_Upload_Documents.py app/services/tinglysning_import_service.py`
+
 # PDF cleanup plan
 
 - [x] Review tracked PDF files and classify which should remain in Git

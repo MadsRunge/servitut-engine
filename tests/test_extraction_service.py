@@ -453,3 +453,66 @@ def test_enrich_canonical_preserves_attest_scope_over_akt_scope():
     assert merged.raw_matrikel_references == ["1o", "1v"]
     assert merged.raw_scope_text == "Vedr. matr.nr. 1o og 1v"
     assert merged.scope_source == "attest"
+
+
+def test_describe_chunk_scoring_inputs_exposes_attest_fields_and_signals():
+    canonical = Servitut(
+        servitut_id="srv-canonical",
+        case_id="case-test",
+        source_document="doc-attest",
+        date_reference="11.03.1974-1904-40",
+        akt_nr="40 F 439",
+        title="Afløbsledning ved byggelinje",
+        applies_to_matrikler=["38b"],
+        raw_matrikel_references=["38b", "1a"],
+        raw_scope_text="Vedr. matr.nr. 38b",
+    )
+
+    described = extraction_service.describe_chunk_scoring_inputs([canonical])
+
+    row = described["canonical_rows"][0]
+    assert row["raw_scope_text"] == "Vedr. matr.nr. 38b"
+    assert row["applies_to_matrikler"] == ["38b"]
+    signal_types = {signal["signal_type"] for signal in row["derived_signals"]}
+    assert {"akt_nr", "date_ref", "lob_suffix", "matrikel", "title_word"} <= signal_types
+
+
+def test_score_akt_chunks_for_case_includes_scoreless_context_chunks(monkeypatch):
+    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439", title="Byggelinje")
+    document = Document(
+        document_id="doc-a",
+        case_id="case-test",
+        filename="akt.pdf",
+        file_path="storage/cases/case-test/documents/doc-a/original.pdf",
+        document_type="akt",
+    )
+    chunks = [
+        make_chunk("doc-a", page=1, text="Forord uden signal"),
+        make_chunk("doc-a", page=2, text="Her står akt 40F439 tydeligt"),
+        make_chunk("doc-a", page=3, text="Efterfølgende kontekst uden egne signaler"),
+        make_chunk("doc-a", page=4, text="Helt irrelevant afslutning"),
+    ]
+
+    monkeypatch.setattr(
+        extraction_service.storage_service,
+        "list_documents",
+        lambda case_id: [document],
+    )
+    monkeypatch.setattr(
+        extraction_service.storage_service,
+        "load_chunks",
+        lambda case_id, doc_id: chunks,
+    )
+
+    results = extraction_service.score_akt_chunks_for_case("case-test", [canonical])
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["candidate_count"] == 3
+    assert result["selection_summary"]["selected_hit_chunks"] == 1
+    assert result["selection_summary"]["selected_context_chunks"] == 2
+
+    states_by_page = {detail["page"]: detail["selection_state"] for detail in result["chunk_details"]}
+    assert states_by_page[1] == "selected_context"
+    assert states_by_page[2] == "selected_hit"
+    assert states_by_page[3] == "selected_context"

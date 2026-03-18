@@ -14,7 +14,10 @@ from app.services.extraction import (
 )
 from app.services import matrikel_service, storage_service
 from app.services.extraction.enricher import (
+    analyze_candidate_selection,
     build_scoring_signals,
+    describe_scoring_inputs,
+    get_chunk_scoring_rules,
     score_chunks,
     select_candidate_chunks,
 )
@@ -170,6 +173,9 @@ def score_akt_chunks_for_case(
     Hvert element indeholder metadata om chunks og hvilke der er valgt som kandidater.
     """
     signals = build_scoring_signals(canonical_list)
+    scoring_inputs = describe_scoring_inputs(canonical_list)
+    signal_lookup = scoring_inputs["signal_lookup"]
+    rules = get_chunk_scoring_rules()
     documents = {
         d.document_id: d
         for d in storage_service.list_documents(case_id)
@@ -181,21 +187,60 @@ def score_akt_chunks_for_case(
         if not chunks:
             continue
         scored = score_chunks(chunks, signals)
+        analysis = analyze_candidate_selection(chunks, canonical_list)
         candidates = select_candidate_chunks(chunks, canonical_list)
         candidate_ids = {c.chunk_id for c in candidates}
+        selected_indices = set(analysis["selected_indices"])
+        hit_indices = analysis["hit_indices"]
+        candidate_cap_excluded = set(analysis["candidate_cap_excluded_indices"])
+        char_cap_excluded = set(analysis["char_cap_excluded_indices"])
+        score_by_idx = analysis["score_by_idx"]
+        reasons_by_idx = analysis["reasons_by_idx"]
         max_score = max((s for s, _, _ in scored), default=0)
-        chunk_details = [
+        visible_indices = sorted(
             {
-                "chunk_id": chunks[i].chunk_id,
-                "page": chunks[i].page,
-                "score": s,
-                "reasons": r,
-                "text_preview": chunks[i].text[:150],
-                "selected": chunks[i].chunk_id in candidate_ids,
+                i for s, i, _ in scored if s > 0
             }
-            for s, i, r in scored
-            if s > 0
-        ]
+            | selected_indices
+            | candidate_cap_excluded
+            | char_cap_excluded
+        )
+        chunk_details = []
+        for idx in visible_indices:
+            chunk = chunks[idx]
+            score = score_by_idx.get(idx, 0)
+            reason_keys = reasons_by_idx.get(idx, [])
+            matched_signals = [_expand_signal_reason(reason, signal_lookup) for reason in reason_keys]
+            selection_state = _chunk_selection_state(
+                idx,
+                score,
+                selected_indices,
+                hit_indices,
+                candidate_cap_excluded,
+                char_cap_excluded,
+            )
+            chunk_details.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "chunk_index": chunk.chunk_index,
+                    "page": chunk.page,
+                    "score": score,
+                    "reasons": reason_keys,
+                    "matched_signals": matched_signals,
+                    "selection_state": selection_state,
+                    "selection_label": _chunk_selection_label(selection_state),
+                    "selection_reason": _chunk_selection_reason(
+                        selection_state,
+                        idx,
+                        analysis["context_sources"],
+                        chunks,
+                    ),
+                    "text_preview": chunk.text[:240],
+                    "text_length": len(chunk.text),
+                    "selected": chunk.chunk_id in candidate_ids,
+                    "rank": analysis["rank_by_idx"].get(idx),
+                }
+            )
         results.append(
             {
                 "doc_id": doc_id,
@@ -205,7 +250,111 @@ def score_akt_chunks_for_case(
                 "candidate_chars": sum(len(c.text) for c in candidates),
                 "max_score": max_score,
                 "skipped": len(candidates) == 0,
+                "rules": rules,
+                "selection_summary": {
+                    "hit_chunks": len(hit_indices),
+                    "selected_hit_chunks": sum(1 for idx in selected_indices if idx in hit_indices),
+                    "selected_context_chunks": sum(1 for idx in selected_indices if idx not in hit_indices),
+                    "below_threshold_chunks": sum(
+                        1
+                        for score, idx, _ in scored
+                        if 0 < score < rules["minimum_score"] and idx not in selected_indices
+                    ),
+                    "candidate_cap_excluded_chunks": len(candidate_cap_excluded),
+                    "char_cap_excluded_chunks": len(char_cap_excluded),
+                    "visible_chunk_details": len(chunk_details),
+                },
                 "chunk_details": chunk_details,
             }
         )
     return results
+
+
+def describe_chunk_scoring_inputs(canonical_list: List[Servitut]) -> dict:
+    scoring_inputs = describe_scoring_inputs(canonical_list)
+    scoring_inputs.pop("signal_lookup", None)
+    return scoring_inputs
+
+
+def _expand_signal_reason(reason: str, signal_lookup: dict[str, dict]) -> dict:
+    signal = signal_lookup.get(reason)
+    if not signal:
+        signal_type, _, normalized = reason.partition(":")
+        return {
+            "signal_key": reason,
+            "signal_type": signal_type,
+            "label": signal_type,
+            "weight": 0,
+            "description": "",
+            "normalized_value": normalized,
+            "display_values": [normalized] if normalized else [],
+            "canonical_refs": [],
+        }
+    return {
+        "signal_key": signal["signal_key"],
+        "signal_type": signal["signal_type"],
+        "label": signal["label"],
+        "weight": signal["weight"],
+        "description": signal["description"],
+        "normalized_value": signal["normalized_value"],
+        "display_values": list(signal["display_values"]),
+        "canonical_refs": list(signal["canonical_refs"]),
+    }
+
+
+def _chunk_selection_state(
+    idx: int,
+    score: int,
+    selected_indices: set[int],
+    hit_indices: set[int],
+    candidate_cap_excluded: set[int],
+    char_cap_excluded: set[int],
+) -> str:
+    if idx in selected_indices and idx in hit_indices:
+        return "selected_hit"
+    if idx in selected_indices:
+        return "selected_context"
+    if idx in char_cap_excluded:
+        return "excluded_char_cap"
+    if idx in candidate_cap_excluded:
+        return "excluded_candidate_cap"
+    if score > 0:
+        return "below_threshold"
+    return "hidden"
+
+
+def _chunk_selection_label(selection_state: str) -> str:
+    return {
+        "selected_hit": "Valgt til LLM som hit",
+        "selected_context": "Valgt til LLM som kontekst",
+        "excluded_char_cap": "Fravalgt pga. tegnloft",
+        "excluded_candidate_cap": "Fravalgt pga. top-12 cap",
+        "below_threshold": "Match fundet, men under tærskel",
+        "hidden": "Skjult",
+    }.get(selection_state, selection_state)
+
+
+def _chunk_selection_reason(
+    selection_state: str,
+    idx: int,
+    context_sources: dict[int, list[int]],
+    chunks: list[Chunk],
+) -> str:
+    if selection_state == "selected_hit":
+        return "Chunken nåede minimumscore og er sendt til LLM."
+    if selection_state == "selected_context":
+        neighbors = [
+            f"side {chunks[hit_idx].page}"
+            for hit_idx in context_sources.get(idx, [])
+            if hit_idx != idx
+        ]
+        if neighbors:
+            return f"Chunken er med som nabokontekst til hit på {', '.join(neighbors)}."
+        return "Chunken er med som kontekst til et nærliggende hit."
+    if selection_state == "excluded_char_cap":
+        return "Chunken var blandt de prioriterede kandidater, men røg ud ved tegnloftet."
+    if selection_state == "excluded_candidate_cap":
+        return "Chunken var i kontekstvinduet, men røg ud ved top-12 cap."
+    if selection_state == "below_threshold":
+        return "Chunken havde signal, men ikke nok til at blive sendt videre."
+    return ""

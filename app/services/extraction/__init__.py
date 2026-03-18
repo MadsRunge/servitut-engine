@@ -1,6 +1,10 @@
 from app.services.extraction.enricher import (
+    analyze_candidate_selection,
     build_scoring_signals,
+    build_scoring_signal_catalog,
+    describe_scoring_inputs,
     enrich_canonical_list,
+    get_chunk_scoring_rules,
     score_chunks,
     select_candidate_chunks,
 )
@@ -41,8 +45,12 @@ __all__ = [
     "_parse_llm_response",
     "_prescreeen_chunks",
     "_servitut_matches",
+    "analyze_candidate_selection",
     "build_scoring_signals",
+    "build_scoring_signal_catalog",
+    "describe_scoring_inputs",
     "enrich_canonical_list",
+    "get_chunk_scoring_rules",
     "score_chunks",
     "select_candidate_chunks",
 ]
