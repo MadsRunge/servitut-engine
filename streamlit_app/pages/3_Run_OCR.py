@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -18,6 +20,32 @@ from streamlit_app.ui import (
     select_case,
     setup_page,
 )
+
+# Conservative estimate: ~5 seconds per page on Railway (Tesseract OCR)
+SECS_PER_PAGE = 5
+
+# Session state keys for batch threading
+_BATCH_THREAD_KEY = "ocr_batch_thread"
+_BATCH_RESULT_KEY = "ocr_batch_result"
+_BATCH_DOC_START_KEY = "ocr_batch_doc_start"
+
+
+def _format_duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m {seconds % 60}s"
+
+
+def _single_thread_key(doc_id: str) -> str:
+    return f"ocr_single_thread_{doc_id}"
+
+
+def _single_result_key(doc_id: str) -> str:
+    return f"ocr_single_result_{doc_id}"
+
+
+def _single_start_key(doc_id: str) -> str:
+    return f"ocr_single_start_{doc_id}"
 
 
 def _render_ocr_summary(placeholders: list, total_docs: int, done_docs: int) -> None:
@@ -89,7 +117,7 @@ def run_ocr_for_document(case_id: str, doc: Document) -> tuple[bool, str]:
 
 setup_page(
     "Kør OCR",
-    "Behandl uploadede PDF’er gennem OCR-pipelinen. Resultatet bliver side-tekst, OCR-PDF og chunks klar til udtræk.",
+    "Behandl uploadede PDF'er gennem OCR-pipelinen. Resultatet bliver side-tekst, OCR-PDF og chunks klar til udtræk.",
     step="ocr",
 )
 
@@ -122,9 +150,10 @@ if batch_state:
     failures = list(batch_state.get("failures", []))
     next_doc = _next_batch_document(case.case_id, pending_ids)
 
+    elapsed_total = int(time.time() - batch_state.get("start_time", time.time()))
     progress = st.progress(
         done_count / len(docs) if docs else 1.0,
-        text=f"OCR færdig for {done_count}/{len(docs)} dokumenter",
+        text=f"OCR færdig for {done_count}/{len(docs)} dokumenter · {_format_duration(elapsed_total)} forløbet",
     )
     snapshot_ph = st.empty()
     statuses = _build_status_snapshot(docs)
@@ -133,14 +162,11 @@ if batch_state:
     render_batch_snapshot(snapshot_ph, statuses)
 
     status_col1, status_col2 = st.columns([3, 2])
-    if next_doc:
-        status_col1.info(
-            f"Batch-OCR aktiv. Behandler nu `{next_doc.filename}` "
-            f"({len(pending_ids)} dokumenter tilbage i kø)."
-        )
-    else:
-        status_col1.info("Batch-OCR afslutter og synkroniserer status.")
+
     if status_col2.button("Stop batch-OCR", type="secondary", width="stretch"):
+        st.session_state.pop(_BATCH_THREAD_KEY, None)
+        st.session_state.pop(_BATCH_RESULT_KEY, None)
+        st.session_state.pop(_BATCH_DOC_START_KEY, None)
         _clear_batch_state(case.case_id)
         st.session_state["ocr_batch_feedback"] = (
             "warning",
@@ -149,6 +175,7 @@ if batch_state:
         st.rerun()
 
     if not next_doc:
+        status_col1.info("Batch-OCR afslutter og synkroniserer status.")
         if failures:
             st.session_state["ocr_batch_feedback"] = (
                 "warning",
@@ -158,22 +185,54 @@ if batch_state:
             st.session_state["ocr_batch_feedback"] = (
                 "success",
                 f"Batch-OCR færdig. {done_count}/{len(docs)} dokumenter har nu OCR-status `ocr_done`.",
-        )
+            )
         _clear_batch_state(case.case_id)
         st.rerun()
+    elif _BATCH_THREAD_KEY in st.session_state:
+        # Thread kører allerede — poll og vis elapsed time
+        thread = st.session_state[_BATCH_THREAD_KEY]
+        doc_elapsed = int(time.time() - st.session_state[_BATCH_DOC_START_KEY])
+        estimated = max(next_doc.page_count * SECS_PER_PAGE, 10)
+        status_col1.info(
+            f"OCR kører på `{next_doc.filename}` ({next_doc.page_count} sider)  \n"
+            f"Forløbet: **{_format_duration(doc_elapsed)}** / estimeret: ~{_format_duration(estimated)}"
+        )
+        if not thread.is_alive():
+            ok, message = st.session_state.pop(_BATCH_RESULT_KEY, (False, "Ukendt fejl"))
+            st.session_state.pop(_BATCH_THREAD_KEY)
+            st.session_state.pop(_BATCH_DOC_START_KEY)
+            updated_state = deepcopy(batch_state)
+            updated_state["pending_doc_ids"] = [
+                d for d in pending_ids if d != next_doc.document_id
+            ]
+            if not ok:
+                failures.append(f"{next_doc.filename}: {message}")
+            updated_state["failures"] = failures
+            _set_batch_state(case.case_id, updated_state)
+            st.rerun()
+        else:
+            time.sleep(1)
+            st.rerun()
     else:
-        with st.spinner(f"Kører OCR på {next_doc.filename}..."):
-            ok, message = run_ocr_for_document(case.case_id, next_doc)
+        # Start thread for næste dokument
+        status_col1.info(
+            f"Starter OCR på `{next_doc.filename}` ({next_doc.page_count} sider, "
+            f"estimeret ~{_format_duration(next_doc.page_count * SECS_PER_PAGE)})..."
+        )
 
-        updated_state = deepcopy(batch_state)
-        updated_state["pending_doc_ids"] = [doc_id for doc_id in pending_ids if doc_id != next_doc.document_id]
-        if not ok:
-            failures.append(f"{next_doc.filename}: {message}")
-        updated_state["failures"] = failures
-        _set_batch_state(case.case_id, updated_state)
+        def _batch_thread(c_id=case.case_id, d=next_doc):
+            ok, msg = run_ocr_for_document(c_id, d)
+            st.session_state[_BATCH_RESULT_KEY] = (ok, msg)
+
+        t = threading.Thread(target=_batch_thread, daemon=True)
+        st.session_state[_BATCH_THREAD_KEY] = t
+        st.session_state[_BATCH_DOC_START_KEY] = time.time()
+        t.start()
         st.rerun()
 
 if docs_to_process:
+    total_pages = sum(d.page_count for d in docs_to_process)
+    estimated_str = _format_duration(total_pages * SECS_PER_PAGE)
     actions_col1, actions_col2 = st.columns([2, 3])
     if actions_col1.button(
         "Kør OCR på alle ikke-færdige",
@@ -186,16 +245,17 @@ if docs_to_process:
             {
                 "pending_doc_ids": [doc.document_id for doc in docs_to_process],
                 "failures": [],
+                "start_time": time.time(),
             },
         )
         st.rerun()
     if batch_running:
         actions_col2.caption(
-            "Batch-kørsel er aktiv. Siden rerender mellem dokumenter, så status og tællere følger den faktiske state på disken."
+            "Batch-kørsel er aktiv. Siden rerender hvert sekund, så status og tællere følger den faktiske state."
         )
     else:
         actions_col2.caption(
-            "Batch-kørsel tager alle dokumenter, der endnu ikke har status `OCR færdig`, og behandler dem sekventielt."
+            f"{len(docs_to_process)} dokument(er) · {total_pages} sider · estimeret ~{estimated_str}"
         )
 else:
     st.caption("Alle dokumenter er allerede OCR-behandlet.")
@@ -209,13 +269,14 @@ if failed_docs:
         width="content",
         disabled=batch_running,
     ):
-        for doc in failed_docs:
-            with st.spinner(f"Kører OCR igen: {doc.filename}…"):
-                ok, message = run_ocr_for_document(case.case_id, doc)
-                if ok:
-                    st.success(f"{doc.filename}: {message}")
-                else:
-                    st.error(f"{doc.filename}: {message}")
+        _set_batch_state(
+            case.case_id,
+            {
+                "pending_doc_ids": [d.document_id for d in failed_docs],
+                "failures": [],
+                "start_time": time.time(),
+            },
+        )
         st.rerun()
 
 for doc in docs:
@@ -225,19 +286,54 @@ for doc in docs:
         col2.metric("Sider", str(doc.page_count))
         col3.metric("Status", parse_status_label(doc.parse_status))
 
-        if st.button(
-            "Kør OCR nu",
-            key=f"ocr_{doc.document_id}",
-            type="primary",
-            width="stretch",
-            disabled=batch_running,
-        ):
-            with st.spinner(f"OCR kører på {doc.filename}..."):
-                ok, message = run_ocr_for_document(case.case_id, doc)
+        tk = _single_thread_key(doc.document_id)
+        rk = _single_result_key(doc.document_id)
+        sk = _single_start_key(doc.document_id)
+
+        if tk in st.session_state:
+            thread = st.session_state[tk]
+            doc_elapsed = int(time.time() - st.session_state[sk])
+            estimated = max(doc.page_count * SECS_PER_PAGE, 10)
+            st.info(
+                f"OCR kører... **{_format_duration(doc_elapsed)}** forløbet "
+                f"/ estimeret ~{_format_duration(estimated)} ({doc.page_count} sider)"
+            )
+            if not thread.is_alive():
+                ok, message = st.session_state.pop(rk, (False, "Ukendt fejl"))
+                st.session_state.pop(tk)
+                st.session_state.pop(sk)
                 if ok:
                     st.success(f"OCR færdig: {message}")
-                    st.rerun()
-                st.error(f"Fejl: {message}")
+                else:
+                    st.error(f"Fejl: {message}")
+                st.rerun()
+            else:
+                time.sleep(1)
+                st.rerun()
+        elif not batch_running:
+            if st.button(
+                "Kør OCR nu",
+                key=f"ocr_{doc.document_id}",
+                type="primary",
+                width="stretch",
+            ):
+                def _single_thread(c_id=case.case_id, d=doc):
+                    ok, msg = run_ocr_for_document(c_id, d)
+                    st.session_state[rk] = (ok, msg)
+
+                t = threading.Thread(target=_single_thread, daemon=True)
+                st.session_state[tk] = t
+                st.session_state[sk] = time.time()
+                t.start()
+                st.rerun()
+        else:
+            st.button(
+                "Kør OCR nu",
+                key=f"ocr_{doc.document_id}",
+                type="primary",
+                width="stretch",
+                disabled=True,
+            )
 
         if doc.parse_status == "ocr_done":
             blank = doc.ocr_blank_pages

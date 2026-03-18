@@ -1,6 +1,7 @@
 [server]
 enableWebsocketCompression = false
 maxUploadSize = 200
+headless = true
 
 [browser]
 gatherUsageStats = false
