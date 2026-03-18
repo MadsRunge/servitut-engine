@@ -8,6 +8,7 @@ from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.report import Report
 from app.models.servitut import Servitut
+from app.models.tmv_job import TmvJob
 from app.utils.files import json_exists, load_json, save_json
 
 logger = get_logger(__name__)
@@ -256,4 +257,31 @@ def list_reports(case_id: str) -> List[Report]:
             result.append(Report(**load_json(f)))
         except Exception as e:
             logger.warning(f"Could not load report {f}: {e}")
+    return result
+
+
+# --- TMV Jobs ---
+
+def save_tmv_job(job: TmvJob) -> None:
+    path = _case_dir(job.case_id) / "tmv_jobs" / f"{job.job_id}.json"
+    save_json(path, job.model_dump(mode="json"))
+
+
+def load_tmv_job(case_id: str, job_id: str) -> Optional[TmvJob]:
+    path = _case_dir(case_id) / "tmv_jobs" / f"{job_id}.json"
+    if not json_exists(path):
+        return None
+    return TmvJob(**load_json(path))
+
+
+def list_tmv_jobs(case_id: str) -> List[TmvJob]:
+    jobs_dir = _case_dir(case_id) / "tmv_jobs"
+    if not jobs_dir.exists():
+        return []
+    result = []
+    for f in sorted(jobs_dir.glob("*.json"), reverse=True):
+        try:
+            result.append(TmvJob(**load_json(f)))
+        except Exception as e:
+            logger.warning(f"Could not load tmv_job {f}: {e}")
     return result

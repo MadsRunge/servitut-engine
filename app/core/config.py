@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     OCR_JOBS: int = 0
     OCR_BATCH_SIZE: int = 80
     APP_PIN: str = ""
+    TINGLYSNING_DOWNLOAD_DIR: str = "~/Downloads"
+    TMV_JOB_DOWNLOAD_DIR: str = "~/Downloads/servitut-engine-tmv"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -37,6 +39,10 @@ class Settings(BaseSettings):
     @property
     def prompts_path(self) -> Path:
         return Path(self.PROMPTS_DIR)
+
+    @property
+    def tinglysning_download_path(self) -> Path:
+        return Path(self.TINGLYSNING_DOWNLOAD_DIR).expanduser()
 
 
 settings = Settings()
