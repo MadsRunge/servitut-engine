@@ -119,6 +119,14 @@ st.text_area(
 )
 _render_split_status(total_pages)
 
+_SPLIT_DONE_KEY = f"split_done_{case.case_id}"
+
+if st.session_state.get(_SPLIT_DONE_KEY):
+    saved_docs = st.session_state.pop(_SPLIT_DONE_KEY)
+    st.success(f"{len(saved_docs)} del-PDF'er gemt som akter og klar til OCR.")
+    for part_filename, doc_id in saved_docs:
+        st.caption(f"• **{part_filename}** (`{doc_id}`)")
+
 if st.button("Opdel og gem som akter", key="split_upload_btn", type="primary", width="stretch"):
     try:
         ranges = parse_page_ranges(st.session_state.get("split_ranges_text", ""), total_pages)
@@ -128,7 +136,9 @@ if st.button("Opdel og gem som akter", key="split_upload_btn", type="primary", w
     except Exception as exc:
         st.error(f"Opdeling fejlede: {exc}")
     else:
+        saved = []
         for part_filename, part_bytes in split_parts:
             doc = create_document_from_bytes(case.case_id, part_filename, part_bytes, "akt")
-            st.success(f"Uploadet: **{part_filename}** (`{doc.document_id}`)")
+            saved.append((part_filename, doc.document_id))
+        st.session_state[_SPLIT_DONE_KEY] = saved
         st.rerun()

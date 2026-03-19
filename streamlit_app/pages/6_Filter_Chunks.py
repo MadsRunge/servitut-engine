@@ -3,6 +3,8 @@ import threading
 import time
 from pathlib import Path
 
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
@@ -306,6 +308,7 @@ else:
                 st.session_state[_CA_RESULT] = (None, str(exc))
 
         thread = threading.Thread(target=_canonical_thread, daemon=True)
+        add_script_run_ctx(thread, get_script_run_ctx())
         st.session_state[_CA_THREAD] = thread
         st.session_state[_CA_START] = time.time()
         thread.start()
@@ -376,6 +379,7 @@ else:
                 st.session_state[_SC_RESULT] = (None, str(exc))
 
         thread = threading.Thread(target=_scoring_thread, daemon=True)
+        add_script_run_ctx(thread, get_script_run_ctx())
         st.session_state[_SC_THREAD] = thread
         st.session_state[_SC_START] = time.time()
         thread.start()
