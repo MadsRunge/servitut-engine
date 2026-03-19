@@ -114,7 +114,7 @@ if active_job and active_job.status in ACTIVE_STATUSES:
         else:
             # Første gang — login ikke bekræftet endnu (polling)
             st.caption("Logger du ind med MitID i browser-vinduet, fortsætter flowet automatisk.")
-        if st.button("Klar til download (manuel)", use_container_width=True):
+        if st.button("Klar til download (manuel)", width="stretch"):
             tmv_browser_service.signal_ready(case.case_id, active_job.job_id)
             st.toast("Signal sendt — fortsætter...")
             st.rerun()
@@ -164,7 +164,7 @@ else:
     if not address_default:
         st.caption("Tilføj en adresse på opret-siden for at den forvalgt her.")
 
-    if st.button("Start TMV-flow (Playwright)", type="primary", use_container_width=True):
+    if st.button("Start TMV-flow (Playwright)", type="primary", width="stretch"):
         try:
             job = tmv_browser_service.start_job(
                 case.case_id,
@@ -188,14 +188,14 @@ with st.expander("Manuel import (fallback uden Playwright)"):
         st.caption(f"Adresse til opslag: **{case.address}**")
 
     manual_col1, manual_col2 = st.columns([1, 1])
-    if manual_col1.button("1. Marker download-start", type="primary", use_container_width=True):
+    if manual_col1.button("1. Marker download-start", type="primary", width="stretch"):
         st.session_state[download_marker_key] = datetime.now(timezone.utc)
         st.toast("Download-markør gemt. Åbn nu TMV og hent PDF'erne.")
 
     manual_col2.link_button(
         "2. Åbn tinglysning.dk",
         url="https://www.tinglysning.dk/tmv/",
-        use_container_width=True,
+        width="stretch",
     )
 
     marked_at = st.session_state.get(download_marker_key)
@@ -211,7 +211,7 @@ with st.expander("Manuel import (fallback uden Playwright)"):
         key="manual_download_dir",
     )
 
-    if st.button("3. Importér nye PDF'er", use_container_width=True):
+    if st.button("3. Importér nye PDF'er", width="stretch"):
         if not marked_at:
             st.error("Klik først på 'Marker download-start', før du importerer.")
         else:

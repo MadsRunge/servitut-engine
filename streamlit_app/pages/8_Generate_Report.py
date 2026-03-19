@@ -190,7 +190,7 @@ else:
         data=markdown_export,
         file_name=f"{base_name}.md",
         mime="text/markdown",
-        use_container_width=True,
+        width="stretch",
         key=f"download_md_{latest.report_id}",
     )
     exp_col2.download_button(
@@ -198,7 +198,7 @@ else:
         data=html_export,
         file_name=f"{base_name}.html",
         mime="text/html",
-        use_container_width=True,
+        width="stretch",
         key=f"download_html_{latest.report_id}",
     )
     exp_col3.download_button(
@@ -206,7 +206,7 @@ else:
         data=json_export,
         file_name=f"{base_name}.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
         key=f"download_json_{latest.report_id}",
     )
     with edit_col:
@@ -259,7 +259,7 @@ else:
                     data=build_markdown_report(report),
                     file_name=f"{base_name_old}.md",
                     mime="text/markdown",
-                    use_container_width=True,
+                    width="stretch",
                     key=f"download_md_{report.report_id}",
                 )
                 c2.download_button(
@@ -267,7 +267,7 @@ else:
                     data=build_html_report(report, case),
                     file_name=f"{base_name_old}.html",
                     mime="text/html",
-                    use_container_width=True,
+                    width="stretch",
                     key=f"download_html_{report.report_id}",
                 )
                 c3.download_button(
@@ -275,6 +275,6 @@ else:
                     data=json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2),
                     file_name=f"{base_name_old}.json",
                     mime="application/json",
-                    use_container_width=True,
+                    width="stretch",
                     key=f"download_json_{report.report_id}",
                 )

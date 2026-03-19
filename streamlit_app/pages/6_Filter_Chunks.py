@@ -171,7 +171,7 @@ def _render_document_result(result: dict) -> None:
                     "Chunk": detail["chunk_index"],
                     "Status": detail["selection_label"],
                     "Score": detail["score"],
-                    "Rank": detail["rank"] or "—",
+                    "Rank": str(detail["rank"]) if detail["rank"] is not None else "—",
                     "Hvorfor": detail["selection_reason"],
                     "Match fra attest": _format_matched_signals(detail["matched_signals"]),
                     "Preview": detail["text_preview"],

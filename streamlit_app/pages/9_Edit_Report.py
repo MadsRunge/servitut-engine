@@ -82,7 +82,7 @@ editor_rows = report_to_editor_rows(report)
 
 edited_rows = st.data_editor(
     editor_rows,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     num_rows="fixed",
     disabled=["servitut_id"],
@@ -147,7 +147,7 @@ st.divider()
 
 save_col, nav_col = st.columns([3, 2])
 with save_col:
-    if st.button("Gem ændringer", type="primary", use_container_width=True):
+    if st.button("Gem ændringer", type="primary", width="stretch"):
         saved_report = update_report_from_editor(report, edited_rows, notes=notes_value)
         storage_service.save_report(saved_report)
         st.toast("Rapport gemt.", icon="✅")
