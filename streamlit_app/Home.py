@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
-from app.services.case_service import list_cases
+from app.services.case_service import delete_case, list_cases
 from streamlit_app.ui import (
     compute_case_stats,
     render_case_banner,
@@ -76,3 +76,22 @@ else:
                 f"{case.case_id} · oprettet {case.created_at:%Y-%m-%d %H:%M} · "
                 f"status {stats.case_status}"
             )
+
+            confirm_key = f"delete_confirm_{case.case_id}"
+            if st.session_state.get(confirm_key):
+                st.error(
+                    f"**Advarsel:** Dette sletter al data for sagen **{case.name}** permanent — "
+                    f"dokumenter, OCR-sider, chunks, servitutter og rapporter. Handlingen kan ikke fortrydes."
+                )
+                col_yes, col_no, _ = st.columns([1, 1, 4])
+                if col_yes.button("Ja, slet alt data", key=f"delete_yes_{case.case_id}", type="primary"):
+                    delete_case(case.case_id)
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
+                if col_no.button("Annuller", key=f"delete_no_{case.case_id}"):
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
+            else:
+                if st.button("Slet sag", key=f"delete_btn_{case.case_id}"):
+                    st.session_state[confirm_key] = True
+                    st.rerun()
