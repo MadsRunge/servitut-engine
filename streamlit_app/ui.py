@@ -394,6 +394,76 @@ def _inject_styles() -> None:
             grid-template-columns: 1fr;
           }
         }
+
+        /* ── Markdown-tabeller (rapport-preview, st.markdown) ── */
+        .stMarkdown table {
+          border-collapse: separate;
+          border-spacing: 0;
+          width: 100%;
+          border: 1px solid var(--line);
+          border-radius: 14px;
+          overflow: hidden;
+          background: var(--card);
+          margin: 0.6rem 0 1.1rem 0;
+          font-size: 0.91rem;
+          box-shadow: 0 10px 24px rgba(42, 31, 21, 0.05);
+        }
+
+        .stMarkdown thead {
+          background: linear-gradient(135deg,
+            rgba(15, 118, 110, 0.13),
+            rgba(15, 118, 110, 0.06));
+        }
+
+        .stMarkdown th {
+          padding: 0.7rem 1rem;
+          text-align: left;
+          font-size: 0.71rem;
+          text-transform: uppercase;
+          letter-spacing: 0.11em;
+          font-weight: 700;
+          color: var(--accent);
+          border-bottom: 1px solid var(--line);
+          white-space: nowrap;
+        }
+
+        .stMarkdown td {
+          padding: 0.58rem 1rem;
+          border-bottom: 1px solid rgba(74, 58, 44, 0.07);
+          vertical-align: top;
+          line-height: 1.55;
+          color: var(--ink);
+        }
+
+        .stMarkdown tbody tr:last-child td {
+          border-bottom: none;
+        }
+
+        .stMarkdown tbody tr:nth-child(even) td {
+          background: rgba(15, 118, 110, 0.028);
+        }
+
+        .stMarkdown tbody tr:hover td {
+          background: rgba(15, 118, 110, 0.065);
+          transition: background 0.12s ease;
+        }
+
+        /* ── Data editor & dataframe containers ── */
+        [data-testid="stDataFrame"],
+        [data-testid="stDataEditor"] {
+          border: 1px solid var(--line) !important;
+          border-radius: 16px !important;
+          box-shadow: 0 12px 28px rgba(42, 31, 21, 0.07) !important;
+          background: var(--card-strong) !important;
+        }
+
+        /* Toolbar over data editor */
+        [data-testid="stDataEditor"] [data-testid="stElementToolbar"],
+        [data-testid="stDataFrame"] [data-testid="stElementToolbar"] {
+          background: rgba(244, 239, 231, 0.9) !important;
+          border-bottom: 1px solid var(--line) !important;
+          border-radius: 16px 16px 0 0 !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,

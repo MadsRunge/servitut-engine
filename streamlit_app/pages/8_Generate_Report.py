@@ -146,89 +146,135 @@ elif st.button("Generer redegørelse", type="primary"):
     t.start()
     st.rerun()
 
-render_section("Gemte rapporter", "Tidligere redegørelser for den aktive sag.")
 reports = storage_service.list_reports(case.case_id)
-if not reports:
+reports_sorted = sorted(reports, key=lambda r: r.created_at, reverse=True)
+
+if not reports_sorted:
     render_empty_state("Ingen rapporter endnu", "Generér den første redegørelse, når servitutterne er gennemgået.")
 else:
-    st.page_link("pages/9_Edit_Report.py", label="→ Åbn redigeringsvindue", icon="✍️")
+    latest = reports_sorted[0]
 
+    render_section("Seneste redegørelse", f"Rapport `{latest.report_id}` · {latest.created_at:%Y-%m-%d %H:%M}")
 
-for report in reports:
-    with st.expander(f"Rapport `{report.report_id}` — {report.created_at}"):
-        ja = sum(1 for e in report.servitutter if (e.scope or "") == "Ja")
-        mske = sum(1 for e in report.servitutter if (e.scope or "Måske") == "Måske")
-        nej = sum(1 for e in report.servitutter if (e.scope or "") == "Nej")
-        render_stat_cards(
-            [
-                ("Poster", str(len(report.servitutter)), "Samlet antal rapportlinjer"),
-                ("Ja", str(ja), "Gælder målmatriklen"),
-                ("Måske", str(mske), "Uafklaret scope"),
-                ("Nej", str(nej), "Gælder ikke målmatriklen"),
-            ]
+    ja = sum(1 for e in latest.servitutter if (e.scope or "") == "Ja")
+    mske = sum(1 for e in latest.servitutter if (e.scope or "Måske") == "Måske")
+    nej = sum(1 for e in latest.servitutter if (e.scope or "") == "Nej")
+    render_stat_cards(
+        [
+            ("Poster", str(len(latest.servitutter)), "Samlet antal rapportlinjer"),
+            ("Ja", str(ja), "Gælder målmatriklen"),
+            ("Måske", str(mske), "Uafklaret scope"),
+            ("Nej", str(nej), "Gælder ikke målmatriklen"),
+        ]
+    )
+    if latest.target_matrikler:
+        st.caption(
+            f"Projektmatrikler: {', '.join(latest.target_matrikler)} · "
+            f"Ejendommens matrikler: {', '.join(latest.available_matrikler) or '—'}"
         )
-        if report.target_matrikler:
-            st.caption(
-                f"Projektmatrikler: {', '.join(report.target_matrikler)} · "
-                f"Ejendommens matrikler: {', '.join(report.available_matrikler) or '—'}"
-            )
-        if report.notes:
-            st.info(report.notes)
+    if latest.notes:
+        st.info(latest.notes)
 
-        markdown_export = _build_markdown_report(report)
-        html_export = _build_html_report(report, case)
-        json_export = json.dumps(
-            report.model_dump(mode="json"),
-            ensure_ascii=False,
-            indent=2,
-        )
-        export_col1, export_col2, export_col3 = st.columns(3)
-        matrikel_slug = "-".join(report.target_matrikler) if report.target_matrikler else "ukendt"
-        date_slug = report.created_at.strftime("%Y-%m-%d")
-        case_slug = case.name.replace(" ", "_").replace("/", "-")[:40]
-        base_name = f"servitutredegoerelse_{case_slug}_{matrikel_slug}_{date_slug}"
+    # Export
+    matrikel_slug = "-".join(latest.target_matrikler) if latest.target_matrikler else "ukendt"
+    date_slug = latest.created_at.strftime("%Y-%m-%d")
+    case_slug = case.name.replace(" ", "_").replace("/", "-")[:40]
+    base_name = f"servitutredegoerelse_{case_slug}_{matrikel_slug}_{date_slug}"
+    markdown_export = build_markdown_report(latest)
+    html_export = build_html_report(latest, case)
+    json_export = json.dumps(latest.model_dump(mode="json"), ensure_ascii=False, indent=2)
 
-        export_col1.download_button(
-            "Download rapport (.md)",
-            data=markdown_export,
-            file_name=f"{base_name}.md",
-            mime="text/markdown",
-            width="stretch",
-            key=f"download_md_{report.report_id}",
-        )
-        export_col2.download_button(
-            "Download rapport (.html)",
-            data=html_export,
-            file_name=f"{base_name}.html",
-            mime="text/html",
-            width="stretch",
-            key=f"download_html_{report.report_id}",
-        )
-        export_col3.download_button(
-            "Download rapportdata (.json)",
-            data=json_export,
-            file_name=f"{base_name}.json",
-            mime="application/json",
-            width="stretch",
-            key=f"download_json_{report.report_id}",
-        )
-        st.page_link("pages/9_Edit_Report.py", label="Redigér denne rapport før endelig eksport", icon="✍️")
+    exp_col1, exp_col2, exp_col3, edit_col = st.columns([2, 2, 2, 3])
+    exp_col1.download_button(
+        "Download (.md)",
+        data=markdown_export,
+        file_name=f"{base_name}.md",
+        mime="text/markdown",
+        use_container_width=True,
+        key=f"download_md_{latest.report_id}",
+    )
+    exp_col2.download_button(
+        "Download (.html)",
+        data=html_export,
+        file_name=f"{base_name}.html",
+        mime="text/html",
+        use_container_width=True,
+        key=f"download_html_{latest.report_id}",
+    )
+    exp_col3.download_button(
+        "Download (.json)",
+        data=json_export,
+        file_name=f"{base_name}.json",
+        mime="application/json",
+        use_container_width=True,
+        key=f"download_json_{latest.report_id}",
+    )
+    with edit_col:
+        st.page_link("pages/9_Edit_Report.py", label="Redigér denne rapport", icon="✍️")
 
-        tab_cards, tab_table = st.tabs(["Læsbar visning", "Rapporttabel"])
-        with tab_cards:
-            if report.servitutter:
-                for entry in report.servitutter:
-                    render_report_entry_card(entry)
-            else:
-                render_empty_state("Ingen rapportposter", "Rapporten indeholder ingen strukturerede linjer.")
-        with tab_table:
-            if report.markdown_content:
-                st.markdown(report.markdown_content)
-            elif report.servitutter:
-                for entry in report.servitutter:
-                    st.markdown(
-                        f"**{entry.nr}.** {entry.description or '—'} "
-                        f"| {entry.legal_type or '—'} | {entry.action or '—'}"
-                    )
-            else:
-                render_empty_state("Ingen tabel endnu", "Rapporten har ingen markdown-tabel at vise.")
+    # Preview
+    tab_cards, tab_table = st.tabs(["Kortvisning", "Redigeret tabel"])
+    with tab_cards:
+        if latest.servitutter:
+            for entry in latest.servitutter:
+                render_report_entry_card(entry)
+        else:
+            render_empty_state("Ingen rapportposter", "Rapporten indeholder ingen strukturerede linjer.")
+    with tab_table:
+        if latest.markdown_content:
+            st.markdown(latest.markdown_content)
+        elif latest.servitutter:
+            for entry in latest.servitutter:
+                st.markdown(
+                    f"**{entry.nr}.** {entry.description or '—'} "
+                    f"| {entry.legal_type or '—'} | {entry.action or '—'}"
+                )
+        else:
+            render_empty_state("Ingen tabel endnu", "Rapporten har ingen markdown-tabel at vise.")
+
+    # Ældre rapporter
+    if len(reports_sorted) > 1:
+        render_section("Tidligere rapporter", "")
+        for report in reports_sorted[1:]:
+            with st.expander(f"Rapport `{report.report_id}` — {report.created_at:%Y-%m-%d %H:%M}"):
+                ja_old = sum(1 for e in report.servitutter if (e.scope or "") == "Ja")
+                mske_old = sum(1 for e in report.servitutter if (e.scope or "Måske") == "Måske")
+                nej_old = sum(1 for e in report.servitutter if (e.scope or "") == "Nej")
+                render_stat_cards(
+                    [
+                        ("Poster", str(len(report.servitutter)), "Samlet antal rapportlinjer"),
+                        ("Ja", str(ja_old), "Gælder målmatriklen"),
+                        ("Måske", str(mske_old), "Uafklaret scope"),
+                        ("Nej", str(nej_old), "Gælder ikke målmatriklen"),
+                    ]
+                )
+                if report.notes:
+                    st.info(report.notes)
+                matrikel_slug_old = "-".join(report.target_matrikler) if report.target_matrikler else "ukendt"
+                date_slug_old = report.created_at.strftime("%Y-%m-%d")
+                base_name_old = f"servitutredegoerelse_{case_slug}_{matrikel_slug_old}_{date_slug_old}"
+                c1, c2, c3 = st.columns(3)
+                c1.download_button(
+                    "Download (.md)",
+                    data=build_markdown_report(report),
+                    file_name=f"{base_name_old}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key=f"download_md_{report.report_id}",
+                )
+                c2.download_button(
+                    "Download (.html)",
+                    data=build_html_report(report, case),
+                    file_name=f"{base_name_old}.html",
+                    mime="text/html",
+                    use_container_width=True,
+                    key=f"download_html_{report.report_id}",
+                )
+                c3.download_button(
+                    "Download (.json)",
+                    data=json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2),
+                    file_name=f"{base_name_old}.json",
+                    mime="application/json",
+                    use_container_width=True,
+                    key=f"download_json_{report.report_id}",
+                )
