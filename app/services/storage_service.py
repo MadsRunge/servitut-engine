@@ -24,12 +24,14 @@ from app.db.models import (
     JobTable,
     ReportTable,
     ServitutTable,
+    ServituterklaeringTable,
     TmvJobTable,
 )
 from app.models.case import Case, Matrikel
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.models.job import Job
+from app.models.declaration import Servituterklaring, ServituterklaeringRow
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Evidence, Servitut
 from app.models.tmv_job import TmvJob
@@ -195,6 +197,8 @@ def _servitut_to_row(srv: Servitut) -> ServitutTable:
         scope_confidence=d.get("scope_confidence"),
         confidence=d.get("confidence", 0.0),
         confirmed_by_attest=d.get("confirmed_by_attest", True),
+        review_status=d.get("review_status"),
+        review_remarks=d.get("review_remarks"),
         applies_to_parcel_numbers=d.get("applies_to_parcel_numbers") or [],
         raw_parcel_references=d.get("raw_parcel_references") or [],
         evidence=d.get("evidence") or [],
@@ -228,6 +232,8 @@ def _row_to_servitut(row: ServitutTable) -> Servitut:
         scope_confidence=row.scope_confidence,
         confidence=row.confidence,
         confirmed_by_attest=row.confirmed_by_attest,
+        review_status=row.review_status,
+        review_remarks=row.review_remarks,
         applies_to_parcel_numbers=list(row.applies_to_parcel_numbers or []),
         raw_parcel_references=list(row.raw_parcel_references or []),
         evidence=evidence,
@@ -603,9 +609,10 @@ def load_all_chunks(
 # Servitutter
 # ---------------------------------------------------------------------------
 
-def save_servitut(session: Session, servitut: Servitut) -> None:
+def save_servitut(session: Session, servitut: Servitut, commit: bool = True) -> None:
     session.merge(_servitut_to_row(servitut))
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def load_servitut(
@@ -737,6 +744,74 @@ def list_reports(
         select(ReportTable).where(ReportTable.case_id == case_id)
     ).all()
     return [_row_to_report(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Servituterklæringer
+# ---------------------------------------------------------------------------
+
+def _declaration_to_row(decl: Servituterklaring) -> ServituterklaeringTable:
+    d = decl.model_dump(mode="json")
+    return ServituterklaeringTable(
+        declaration_id=d["declaration_id"],
+        case_id=d["case_id"],
+        created_at=decl.created_at,
+        manually_reviewed=d.get("manually_reviewed", False),
+        notes=d.get("notes"),
+        target_parcel_numbers=d.get("target_parcel_numbers") or [],
+        rows=d.get("rows") or [],
+    )
+
+
+def _row_to_declaration(row: ServituterklaeringTable) -> Servituterklaring:
+    rows = [ServituterklaeringRow(**r) for r in (row.rows or [])]
+    return Servituterklaring(
+        declaration_id=row.declaration_id,
+        case_id=row.case_id,
+        created_at=row.created_at,
+        manually_reviewed=row.manually_reviewed,
+        notes=row.notes,
+        target_parcel_numbers=list(row.target_parcel_numbers or []),
+        rows=rows,
+    )
+
+
+def save_declaration(session: Session, decl: Servituterklaring) -> None:
+    session.merge(_declaration_to_row(decl))
+    session.commit()
+
+
+def load_declaration(
+    session: Session,
+    case_id: str,
+    declaration_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Servituterklaring]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
+    row = session.get(ServituterklaeringTable, declaration_id)
+    if row is None or row.case_id != case_id:
+        return None
+    return _row_to_declaration(row)
+
+
+def list_declarations(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Servituterklaring]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
+    rows = session.exec(
+        select(ServituterklaeringTable)
+        .where(ServituterklaeringTable.case_id == case_id)
+        .order_by(ServituterklaeringTable.created_at.desc())
+    ).all()
+    return [_row_to_declaration(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

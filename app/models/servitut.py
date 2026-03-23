@@ -39,3 +39,8 @@ class Servitut(SQLModel):
     evidence: List[Evidence] = Field(default_factory=list)
     flags: List[str] = Field(default_factory=list)
     confirmed_by_attest: bool = True  # False = fundet i akt men ikke i tinglysningsattest
+    # Reviewfelter — beregnes ved erklæringsgenerering og gemmes pr. servitut.
+    # Viser kvalitetsstatus uafhængigt af målmatriklen (scope-afhængige statuser
+    # beregnes separat i ServituterklaeringRow).
+    review_status: Optional[str] = None  # ReviewStatus-streng
+    review_remarks: Optional[str] = None

@@ -112,6 +112,8 @@ class ServitutTable(SQLModel, table=True):
     scope_confidence: Optional[float] = None
     confidence: float = Field(default=0.0)
     confirmed_by_attest: bool = Field(default=True)
+    review_status: Optional[str] = None
+    review_remarks: Optional[str] = None
     # JSONB-lister
     applies_to_parcel_numbers: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
@@ -162,6 +164,24 @@ class ReportTable(SQLModel, table=True):
     )
     # JSONB: List[ReportEntry]
     entries: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON_VALUE, nullable=True)
+    )
+
+
+class ServituterklaeringTable(SQLModel, table=True):
+    __tablename__ = "servituterklaringer"
+
+    declaration_id: str = Field(primary_key=True)
+    case_id: str = Field(index=True, foreign_key="cases.case_id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    manually_reviewed: bool = Field(default=False)
+    notes: Optional[str] = None
+    # JSONB: List[str]
+    target_parcel_numbers: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON_VALUE, nullable=True)
+    )
+    # JSONB: List[ServituterklaeringRow]
+    rows: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
 
