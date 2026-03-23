@@ -1,15 +1,19 @@
-from datetime import date
+from datetime import date, datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.api.dependencies.auth import get_current_user
+from app.core.logging import get_logger
 from app.db.database import get_session
-from app.models.report import Report
+from app.models.report import Report, ReportPatch
 from app.models.user import User
 from app.services import case_service, storage_service
+from app.services.report_render_service import build_markdown_table
 from app.services.report_service import generate_report
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -71,6 +75,38 @@ def list_reports(
         case_id,
         owner_user_id=current_user.id,
     )
+
+
+@router.patch("/{case_id}/reports/{report_id}", response_model=Report)
+def patch_report(
+    case_id: str,
+    report_id: str,
+    body: ReportPatch,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    case_service.verify_case_ownership(session, case_id, current_user.id)
+    report = storage_service.load_report(
+        session,
+        case_id,
+        report_id,
+        owner_user_id=current_user.id,
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    entries = body.entries if body.entries is not None else report.entries
+    notes = body.notes if body.notes is not None else report.notes
+    markdown = build_markdown_table(entries) if entries else None
+    updated = report.model_copy(update={
+        "entries": entries,
+        "notes": notes,
+        "manually_edited": True,
+        "edited_at": datetime.utcnow(),
+        "markdown_content": markdown,
+    })
+    storage_service.save_report(session, updated)
+    return updated
 
 
 @router.get("/{case_id}/reports/{report_id}", response_model=Report)

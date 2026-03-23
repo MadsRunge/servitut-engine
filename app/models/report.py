@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
+from pydantic import BaseModel
 from sqlmodel import Field, SQLModel
 
 
@@ -34,3 +35,8 @@ class Report(SQLModel):
     entries: List[ReportEntry] = Field(default_factory=list)
     notes: Optional[str] = None
     markdown_content: Optional[str] = None
+
+
+class ReportPatch(BaseModel):
+    entries: Optional[List[ReportEntry]] = None
+    notes: Optional[str] = None

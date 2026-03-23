@@ -134,6 +134,97 @@ def test_create_declaration_persists_snapshot_and_review_fields():
     assert persisted_historical.review_remarks == ""
 
 
+def test_patch_declaration_updates_row_and_syncs_servitut():
+    """PATCH updates the declaration snapshot AND propagates to Servitut.review_status."""
+    case, headers = _create_case_with_headers("decl-patch@example.com", "Patch-sag")
+
+    with get_session_ctx() as session:
+        storage_service.save_servitut(
+            session,
+            Servitut(
+                easement_id="srv-to-patch",
+                case_id=case.case_id,
+                source_document="akt-1",
+                priority=1,
+                title="Vejret",
+                confirmed_by_attest=True,
+                confidence=0.95,
+                evidence=[],  # no evidence → mangler_kilde
+            ),
+        )
+
+    create_resp = client.post(f"/cases/{case.case_id}/declarations", headers=headers)
+    assert create_resp.status_code == 201
+    decl_id = create_resp.json()["declaration_id"]
+    initial_row = next(r for r in create_resp.json()["rows"] if r["easement_id"] == "srv-to-patch")
+    assert initial_row["review_status"] == "mangler_kilde"
+
+    patch_resp = client.patch(
+        f"/cases/{case.case_id}/declarations/{decl_id}",
+        json={"rows": [{"easement_id": "srv-to-patch", "review_status": "klar", "remarks": "Verificeret manuelt"}]},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+    patched = patch_resp.json()
+    assert patched["manually_reviewed"] is True
+
+    patched_row = next(r for r in patched["rows"] if r["easement_id"] == "srv-to-patch")
+    assert patched_row["review_status"] == "klar"
+    assert patched_row["remarks"] == "Verificeret manuelt"
+
+    # Verify that the underlying Servitut is also synced
+    with get_session_ctx() as session:
+        srv = storage_service.load_servitut(session, case.case_id, "srv-to-patch")
+    assert srv is not None
+    assert srv.review_status == "klar"
+    assert srv.review_remarks == "Verificeret manuelt"
+
+
+def test_patch_declaration_notes_only():
+    """PATCH with only notes leaves rows unchanged."""
+    case, headers = _create_case_with_headers("decl-notes@example.com", "Notes-sag")
+
+    with get_session_ctx() as session:
+        storage_service.save_servitut(
+            session,
+            Servitut(
+                easement_id="srv-notes",
+                case_id=case.case_id,
+                source_document="akt-1",
+                confirmed_by_attest=True,
+                confidence=0.9,
+                evidence=[Evidence(chunk_id="c1", document_id="akt-1", page=1, text_excerpt="tekst")],
+            ),
+        )
+
+    create_resp = client.post(f"/cases/{case.case_id}/declarations", headers=headers)
+    assert create_resp.status_code == 201
+    decl_id = create_resp.json()["declaration_id"]
+    original_rows = create_resp.json()["rows"]
+
+    patch_resp = client.patch(
+        f"/cases/{case.case_id}/declarations/{decl_id}",
+        json={"notes": "Gennemgået 2026-03-23"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200
+    patched = patch_resp.json()
+    assert patched["notes"] == "Gennemgået 2026-03-23"
+    assert patched["manually_reviewed"] is True
+    assert patched["rows"] == original_rows  # rows untouched
+
+
+def test_patch_declaration_not_found():
+    case, headers = _create_case_with_headers("decl-404@example.com", "404-sag")
+
+    response = client.patch(
+        f"/cases/{case.case_id}/declarations/dec-nonexistent",
+        json={"rows": []},
+        headers=headers,
+    )
+    assert response.status_code == 404
+
+
 def test_declaration_routes_forbid_foreign_case_access():
     case, _ = _create_case_with_headers("decl-owner2@example.com", "Ejet sag")
     _, viewer_headers = _create_case_with_headers("decl-viewer@example.com", "Fremmed bruger")
@@ -147,3 +238,12 @@ def test_declaration_routes_forbid_foreign_case_access():
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "forbidden"
         assert response.json()["error"]["message"] == "Forbidden"
+
+    # PATCH requires a body — test separately
+    patch_response = client.patch(
+        f"/cases/{case.case_id}/declarations/dec-foreign",
+        json={"rows": []},
+        headers=viewer_headers,
+    )
+    assert patch_response.status_code == 403
+    assert patch_response.json()["error"]["code"] == "forbidden"

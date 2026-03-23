@@ -46,3 +46,14 @@ class Servituterklaring(BaseModel):
     rows: List[ServituterklaeringRow] = []
     notes: Optional[str] = None
     manually_reviewed: bool = False
+
+
+class DeclarationRowPatch(BaseModel):
+    easement_id: str
+    review_status: Optional[ReviewStatus] = None
+    remarks: Optional[str] = None
+
+
+class DeclarationPatch(BaseModel):
+    rows: Optional[List[DeclarationRowPatch]] = None
+    notes: Optional[str] = None
