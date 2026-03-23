@@ -6,7 +6,7 @@ from celery.utils.log import get_task_logger
 
 from app.db.database import get_session_ctx
 from app.models.job import Job
-from app.services import case_service, extraction_service, storage_service
+from app.services import case_service, extraction_service, pipeline_observability, storage_service
 from app.services.ocr_service import run_document_pipeline
 from app.worker.celery_app import celery_app
 
@@ -57,7 +57,7 @@ def run_ocr_task(job_id: str, case_id: str, doc_id: str) -> dict[str, Any]:
             doc.parse_status = "processing"
             storage_service.save_document(session, doc)
 
-            result = run_document_pipeline(session, case_id, doc)
+            result = run_document_pipeline(session, case_id, doc, run_id=job_id)
             payload = {
                 "document_id": doc_id,
                 "message": "OCR job completed",
@@ -65,11 +65,28 @@ def run_ocr_task(job_id: str, case_id: str, doc_id: str) -> dict[str, Any]:
                 "chunk_count": len(result.chunks),
                 "blank_pages": result.blank_pages,
                 "low_conf_pages": result.low_conf_pages,
+                "page_source": result.page_source,
+                "direct_text_coverage": result.direct_text_coverage,
+                "duration_seconds": result.total_duration_seconds,
+                "observability_file": result.observability_path,
             }
 
         _update_job(case_id, job_id, status="completed", result_data=payload)
         return payload
     except Exception as exc:
+        observability_path = pipeline_observability.write_ocr_run_summary(
+            case_id,
+            doc_id,
+            {
+                "pipeline": "ocr",
+                "case_id": case_id,
+                "document_id": doc_id,
+                "job_id": job_id,
+                "status": "failed",
+                "error": str(exc),
+            },
+            run_id=f"{job_id}_failed",
+        )
         with get_session_ctx() as session:
             doc = storage_service.load_document(session, case_id, doc_id)
             if doc is not None:
@@ -84,6 +101,7 @@ def run_ocr_task(job_id: str, case_id: str, doc_id: str) -> dict[str, Any]:
                 "document_id": doc_id,
                 "message": "OCR job failed",
                 "error": str(exc),
+                "observability_file": str(observability_path),
             },
         )
         logger.exception("OCR job failed for case=%s doc=%s", case_id, doc_id)
@@ -92,6 +110,7 @@ def run_ocr_task(job_id: str, case_id: str, doc_id: str) -> dict[str, Any]:
 
 @celery_app.task(name="app.worker.tasks.run_extraction_task")
 def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
+    all_chunks_count = 0
     _update_job(
         case_id,
         job_id,
@@ -122,6 +141,7 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
 
         with get_session_ctx() as session:
             all_chunks = storage_service.load_all_chunks(session, case_id)
+            all_chunks_count = len(all_chunks)
             if not all_chunks:
                 raise ValueError("No chunks found — parse documents first")
 
@@ -130,6 +150,7 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
                 all_chunks,
                 case_id,
                 progress_callback=progress_callback,
+                observability_run_id=job_id,
             )
 
             for servitut in servitutter:
@@ -141,9 +162,35 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
                 "servitut_count": len(servitutter),
             }
 
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "completed",
+                "chunk_count": all_chunks_count,
+                "servitut_count": len(servitutter),
+            },
+            run_id=f"{job_id}_job",
+        )
+        payload["observability_file"] = str(observability_path)
+
         _update_job(case_id, job_id, status="completed", result_data=payload)
         return payload
     except Exception as exc:
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "failed",
+                "chunk_count": all_chunks_count,
+                "error": str(exc),
+            },
+            run_id=f"{job_id}_job_failed",
+        )
         with get_session_ctx() as session:
             case_service.update_case_status(session, case_id, "error")
 
@@ -154,6 +201,7 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
             result_data={
                 "message": "Extraction job failed",
                 "error": str(exc),
+                "observability_file": str(observability_path),
             },
         )
         logger.exception("Extraction job failed for case=%s", case_id)

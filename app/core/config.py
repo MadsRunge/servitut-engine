@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     OCR_DESKEW: bool = True
     OCR_JOBS: int = 0
     OCR_BATCH_SIZE: int = 80
+    CELERY_WORKER_CONCURRENCY: int = 2
+    CELERY_LOGLEVEL: str = "info"
     APP_PIN: str = ""
     TINGLYSNING_DOWNLOAD_DIR: str = "~/Downloads"
     TMV_JOB_DOWNLOAD_DIR: str = "~/Downloads/servitut-engine-tmv"

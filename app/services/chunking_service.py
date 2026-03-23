@@ -1,3 +1,4 @@
+import re
 from typing import List
 
 from app.core.config import settings
@@ -9,6 +10,19 @@ from app.utils.text import split_into_paragraphs
 
 logger = get_logger(__name__)
 
+# DSS-metadata-headers er administrative forsider der aldrig indeholder servitutindhold.
+# Format: "DSS 88303021 76_AR-A 31 Bulk Sort / Hvid 271876"
+# Dokumentreferencen kan indeholde mellemrum, så vi matcher bredt mellem nummeret og "Bulk".
+_DSS_HEADER_RE = re.compile(
+    r"^dss\s+\d+.{0,50}bulk\s+(sort|hvid)\b", re.IGNORECASE
+)
+
+
+def _is_administrative_page(text: str) -> bool:
+    """Returnér True for sider der med sikkerhed ikke indeholder servitutindhold."""
+    stripped = text.strip()
+    return bool(_DSS_HEADER_RE.match(stripped[:80]))
+
 
 def chunk_pages(pages: List[PageData], doc_id: str, case_id: str) -> List[Chunk]:
     """Split pages into chunks using paragraph-based splitting."""
@@ -19,6 +33,9 @@ def chunk_pages(pages: List[PageData], doc_id: str, case_id: str) -> List[Chunk]
 
     for page in pages:
         if not page.text:
+            continue
+        if _is_administrative_page(page.text):
+            logger.debug("Springer administrativ side over: dok=%s side=%d", doc_id, page.page_number)
             continue
 
         paragraphs = split_into_paragraphs(page.text)

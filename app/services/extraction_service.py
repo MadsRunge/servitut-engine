@@ -47,6 +47,7 @@ def extract_servitutter(
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
     cached_canonical: Optional[List[Servitut]] = None,
+    observability_run_id: Optional[str] = None,
 ) -> List[Servitut]:
     """
     To-pas udtræk:
@@ -141,6 +142,7 @@ def extract_servitutter(
         all_matrikler=all_matrikler,
         doc_filename_by_id=doc_filename_by_id,
         progress_callback=progress_callback,
+        observability_run_id=observability_run_id,
     )
 
 

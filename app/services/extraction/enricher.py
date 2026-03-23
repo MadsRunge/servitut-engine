@@ -1,11 +1,15 @@
 import json
 import re
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from queue import Queue
 from typing import List, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
+from app.services import pipeline_observability
 from app.services.extraction.llm_extractor import _build_chunks_text, _parse_llm_response
 from app.services.extraction.matching import _extract_date_components, _servitut_matches
 from app.services.extraction.merger import _enrich_canonical
@@ -14,7 +18,7 @@ from app.services.extraction.normalization import (
     coerce_str_list,
     parse_registered_at,
 )
-from app.services.extraction.progress import ProgressCallback, _emit_progress
+from app.services.extraction.progress import ProgressCallback, _drain_progress_queue, _emit_progress
 from app.services.extraction.prompts import _load_prompt
 from app.services.llm_service import generate_text
 from app.utils.ids import generate_servitut_id
@@ -530,13 +534,18 @@ def _enrich_from_doc(
     canonical_list: List[Servitut],
     all_matrikler: List[str],
     progress_callback: Optional[ProgressCallback],
+    progress_queue=None,
     doc_filename: Optional[str] = None,
 ) -> List[dict]:
     """One LLM call per akt: ask which canonical servitutter it contains.
     chunk_list should already be pre-filtered candidate chunks (Fase 1).
     """
+    callback = progress_callback
+    if progress_queue is not None:
+        callback = lambda event: progress_queue.put(event)  # noqa: E731
+
     _emit_progress(
-        progress_callback,
+        callback,
         doc_id=doc_id,
         source_type="akt",
         stage="running",
@@ -559,7 +568,7 @@ def _enrich_from_doc(
 
     try:
         _emit_progress(
-            progress_callback,
+            callback,
             doc_id=doc_id,
             source_type="akt",
             stage="requesting",
@@ -574,7 +583,7 @@ def _enrich_from_doc(
         )
         items = _parse_llm_response(response_text)
         _emit_progress(
-            progress_callback,
+            callback,
             doc_id=doc_id,
             source_type="akt",
             stage="completed",
@@ -586,7 +595,7 @@ def _enrich_from_doc(
     except Exception as exc:
         logger.error(f"Enrichment LLM error for doc {doc_id}: {exc}")
         _emit_progress(
-            progress_callback,
+            callback,
             doc_id=doc_id,
             source_type="akt",
             stage="failed",
@@ -607,6 +616,7 @@ def enrich_canonical_list(
     all_matrikler: Optional[List[str]] = None,
     doc_filename_by_id: Optional[dict[str, str]] = None,
     progress_callback: Optional[ProgressCallback] = None,
+    observability_run_id: Optional[str] = None,
 ) -> List[Servitut]:
     """
     Canonical-driven enrichment.
@@ -620,6 +630,7 @@ def enrich_canonical_list(
         return canonical_list
 
     all_matrikler = all_matrikler or []
+    pipeline_started_at = time.perf_counter()
 
     # Build two lookup tables: date_reference → canonical_date_key
     #                          normalised_akt_nr → canonical_date_key
@@ -649,8 +660,20 @@ def enrich_canonical_list(
     # --- Fase 1: Deterministisk chunk-filtrering ---
     logger.info("Fase 1: Scorer og filtrerer akt-chunks mod canonical-signaler")
     candidate_chunks_by_doc: dict[str, list[Chunk]] = {}
+    candidate_metrics_by_doc: dict[str, dict] = {}
+    phase1_started_at = time.perf_counter()
     for doc_id, chunk_list in akt_chunks_by_doc.items():
-        candidates = select_candidate_chunks(chunk_list, canonical_list)
+        analysis = analyze_candidate_selection(chunk_list, canonical_list)
+        candidates = [chunk_list[idx] for idx in analysis["selected_indices"]]
+        candidate_metrics_by_doc[doc_id] = {
+            "total_chunks": len(chunk_list),
+            "candidate_chunks": len(candidates),
+            "candidate_chars": analysis["selected_char_count"],
+            "max_score": analysis["max_score"],
+            "hit_count": len(analysis["hit_indices"]),
+            "selected_indices": list(analysis["selected_indices"]),
+            "skipped": len(candidates) == 0,
+        }
         if candidates:
             candidate_chunks_by_doc[doc_id] = candidates
         else:
@@ -667,9 +690,14 @@ def enrich_canonical_list(
     logger.info(
         f"Fase 1 færdig: {len(candidate_chunks_by_doc)}/{len(akt_chunks_by_doc)} docs → LLM"
     )
+    phase1_duration = round(time.perf_counter() - phase1_started_at, 3)
 
     # --- Fase 2: LLM enrichment (kun docs med kandidater) ---
-    for doc_id, chunk_list in candidate_chunks_by_doc.items():
+    max_workers = min(max(1, settings.EXTRACTION_MAX_CONCURRENCY), len(candidate_chunks_by_doc))
+    ordered_doc_ids = list(candidate_chunks_by_doc.keys())
+    phase2_started_at = time.perf_counter()
+
+    for doc_id in ordered_doc_ids:
         _emit_progress(
             progress_callback,
             doc_id=doc_id,
@@ -679,26 +707,68 @@ def enrich_canonical_list(
             message="Sat i kø",
         )
 
-        items = _enrich_from_doc(
-            doc_id,
-            chunk_list,
-            canonical_list,
-            all_matrikler,
-            progress_callback,
-            doc_filename=doc_filename_by_id.get(doc_id) if doc_filename_by_id else None,
-        )
+    progress_queue: Optional[Queue] = Queue() if progress_callback else None
 
+    if max_workers <= 1:
+        items_by_doc: dict[str, list] = {}
+        for doc_id in ordered_doc_ids:
+            items_by_doc[doc_id] = _enrich_from_doc(
+                doc_id,
+                candidate_chunks_by_doc[doc_id],
+                canonical_list,
+                all_matrikler,
+                progress_callback,
+                progress_queue=None,
+                doc_filename=doc_filename_by_id.get(doc_id) if doc_filename_by_id else None,
+            )
+    else:
+        logger.info(
+            f"Fase 2: Parallel enrichment — {len(ordered_doc_ids)} docs, max_workers={max_workers}"
+        )
+        items_by_doc = {}
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="enrich-doc") as executor:
+            futures = {
+                executor.submit(
+                    _enrich_from_doc,
+                    doc_id,
+                    candidate_chunks_by_doc[doc_id],
+                    canonical_list,
+                    all_matrikler,
+                    None,
+                    progress_queue,
+                    doc_filename_by_id.get(doc_id) if doc_filename_by_id else None,
+                ): doc_id
+                for doc_id in ordered_doc_ids
+            }
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                _drain_progress_queue(progress_queue, progress_callback)
+                for future in done:
+                    doc_id = futures[future]
+                    try:
+                        items_by_doc[doc_id] = future.result()
+                    except Exception as exc:
+                        logger.error(f"Enrichment worker failed for doc {doc_id}: {exc}")
+                        items_by_doc[doc_id] = []
+            _drain_progress_queue(progress_queue, progress_callback)
+    phase2_duration = round(time.perf_counter() - phase2_started_at, 3)
+
+    # --- Merge results serially ---
+    for doc_id in ordered_doc_ids:
+        items = items_by_doc.get(doc_id, [])
+        doc_chunks = candidate_chunks_by_doc[doc_id]
         for item in items:
             result_key = _resolve_canonical_key(item, canonical_by_date, canonical_by_akt, canonical_list, canonical_years)
             if result_key is None:
                 # Ikke i tinglysningsattest — gem som ubekræftet
                 orphan_key = _normalize_akt_nr(item.get("archive_number") or "") or (item.get("date_reference") or "")
                 if orphan_key and orphan_key not in orphan_best:
-                    orphan_best[orphan_key] = (item, doc_id, chunk_list)
+                    orphan_best[orphan_key] = (item, doc_id, doc_chunks)
                 elif orphan_key:
                     existing_conf = float(orphan_best[orphan_key][0].get("confidence", 0))
                     if float(item.get("confidence", 0.5) or 0.5) > existing_conf:
-                        orphan_best[orphan_key] = (item, doc_id, chunk_list)
+                        orphan_best[orphan_key] = (item, doc_id, doc_chunks)
                 logger.debug(
                     f"Umatched enrichment item (not in attest): "
                     f"date={item.get('date_reference')!r}, archive_number={item.get('archive_number')!r}"
@@ -708,13 +778,13 @@ def enrich_canonical_list(
             item_conf = float(item.get("confidence", 0.5) or 0.5)
             existing = best_by_key.get(key)
             if existing is None:
-                best_by_key[key] = (item, doc_id, chunk_list, priority)
+                best_by_key[key] = (item, doc_id, doc_chunks, priority)
             else:
                 existing_conf = float(existing[0].get("confidence", 0))
                 existing_priority = existing[3]
                 # Lower priority number = better match; confidence breaks ties
                 if priority < existing_priority or (priority == existing_priority and item_conf > existing_conf):
-                    best_by_key[key] = (item, doc_id, chunk_list, priority)
+                    best_by_key[key] = (item, doc_id, doc_chunks, priority)
 
     # Apply enrichments
     result: List[Servitut] = []
@@ -799,5 +869,46 @@ def enrich_canonical_list(
     logger.info(
         f"Enrichment færdig: {matched}/{len(canonical_list)} beriget, "
         f"{unconfirmed_count} ubekræftede fra akter"
+    )
+    total_duration = round(time.perf_counter() - pipeline_started_at, 3)
+    observability_payload = {
+        "pipeline": "extraction_enrichment",
+        "case_id": case_id,
+        "canonical_count": len(canonical_list),
+        "total_documents": len(akt_chunks_by_doc),
+        "candidate_documents": len(candidate_chunks_by_doc),
+        "skipped_documents": len(akt_chunks_by_doc) - len(candidate_chunks_by_doc),
+        "candidate_chunks_total": sum(metrics["candidate_chunks"] for metrics in candidate_metrics_by_doc.values()),
+        "candidate_chars_total": sum(metrics["candidate_chars"] for metrics in candidate_metrics_by_doc.values()),
+        "phase1_duration_seconds": phase1_duration,
+        "phase2_duration_seconds": phase2_duration,
+        "total_duration_seconds": total_duration,
+        "max_workers": max_workers,
+        "matched_servitutter": matched,
+        "unconfirmed_servitutter": unconfirmed_count,
+        "documents": [
+            {
+                "doc_id": doc_id,
+                "filename": doc_filename_by_id.get(doc_id) if doc_filename_by_id else None,
+                **candidate_metrics_by_doc[doc_id],
+                "llm_items": len(items_by_doc.get(doc_id, [])),
+            }
+            for doc_id in akt_chunks_by_doc
+        ],
+    }
+    observability_path = pipeline_observability.write_extraction_run_summary(
+        case_id,
+        observability_payload,
+        run_id=observability_run_id,
+    )
+    logger.info(
+        "Extraction observability: case=%s canonical=%d candidate_docs=%d/%d candidate_chunks=%d total=%.3fs path=%s",
+        case_id,
+        len(canonical_list),
+        len(candidate_chunks_by_doc),
+        len(akt_chunks_by_doc),
+        observability_payload["candidate_chunks_total"],
+        total_duration,
+        observability_path,
     )
     return result

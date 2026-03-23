@@ -329,6 +329,11 @@ Alle indstillinger styres via `.env` og eksponeres som Pydantic `BaseSettings`:
 | `PROMPTS_DIR` | `prompts` | Mappe med prompt-filer |
 | `MAX_CHUNK_SIZE` | `2000` | Maks tegn pr. chunk |
 | `CHUNK_OVERLAP` | `200` | Overlap mellem chunks (tegn) |
+| `EXTRACTION_MAX_CONCURRENCY` | `4` | Antal parallelle dokumentkald i extraction/enrichment |
+| `OCR_JOBS` | `0` | Intern `ocrmypdf`-parallelisme pr. dokument (`0` = auto) |
+| `OCR_BATCH_SIZE` | `80` | Batch-størrelse for meget store PDFs under OCR |
+| `CELERY_WORKER_CONCURRENCY` | `2` | Antal samtidige Celery-tasks når worker startes via `scripts/run_worker.sh` |
+| `CELERY_LOGLEVEL` | `info` | Logniveau for worker-scriptet |
 
 ---
 
@@ -345,6 +350,39 @@ Før LLM kaldes, filtreres chunks på et sæt danske servitut-nøgleord (`servit
 ### OCR-kandidat-detektion
 
 Sider med færre end 50 tegn efter tekstekstraktion markeres som `ocr_candidate` med confidence `0.3`. Disse sider er sandsynligvis indskannede billeder og kan i en fremtidig version sendes til OCR-behandling.
+
+### Pipeline-observability
+
+Hver OCR- og extraction-kørsel skriver en lokal JSON-fil under:
+
+- `storage/cases/<case_id>/observability/ocr/`
+- `storage/cases/<case_id>/observability/extraction/`
+
+Filerne indeholder bl.a.:
+
+- sidekilde (`pdfplumber_direct`, `ocrmypdf`, `reused_pages`)
+- direct-text coverage
+- page/chunk counts
+- candidate doc/chunk counts i extraction
+- fase-varigheder og total runtime
+
+Det er den hurtigste måde at analysere store sager som Aalborg uden at eksponere tekniske logs i frontend.
+
+### Worker-start til store sager
+
+Start Celery-worker via repo-scriptet, så concurrency styres fra `.env`:
+
+```bash
+./scripts/run_worker.sh
+```
+
+Til store sager kan du typisk starte med:
+
+```bash
+CELERY_WORKER_CONCURRENCY=2 ./scripts/run_worker.sh
+```
+
+og hæve til `4`, hvis maskinen kan bære CPU/RAM-presset fra parallel OCR.
 
 ### RAG (keyword-scoring)
 

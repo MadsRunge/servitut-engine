@@ -4,12 +4,14 @@ from datetime import date
 from app.core.config import settings
 from app.models.attest import AttestPipelineState, AttestSegment
 from app.models.chunk import Chunk
-from app.models.document import Document
+from app.models.document import Document, PageData
 from app.models.servitut import Evidence, Servitut
 from app.services.extraction import attest_pipeline, llm_extractor
-from app.services.extraction.enricher import select_candidate_chunks
+from app.services.extraction import enricher as enricher_module
+from app.services.extraction.enricher import enrich_canonical_list, select_candidate_chunks
 from app.services.extraction.merger import _enrich_canonical
 from app.services import extraction_service
+from app.services.chunking_service import chunk_pages
 
 
 def make_chunk(doc_id: str, page: int = 1, text: str = "servitut byggelinje vejret") -> Chunk:
@@ -905,3 +907,180 @@ def test_score_akt_chunks_for_case_includes_scoreless_context_chunks(monkeypatch
     assert states_by_page[1] == "selected_context"
     assert states_by_page[2] == "selected_hit"
     assert states_by_page[3] == "selected_context"
+
+
+# ---------------------------------------------------------------------------
+# Parallel enrichment (enrich_canonical_list Fase 2)
+# ---------------------------------------------------------------------------
+
+def test_enrich_canonical_list_uses_parallel_executor(monkeypatch):
+    """Fase 2 bruger ThreadPoolExecutor når EXTRACTION_MAX_CONCURRENCY > 1."""
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 4)
+
+    canonical = [make_canonical("01.01.2000-1-1", archive_number="40 F 439")]
+    chunk_a = make_chunk("doc-a", page=1, text="Akt 40F439 vedr. vejret")
+    chunk_b = make_chunk("doc-b", page=1, text="Akt 40F439 vedr. ledning")
+
+    captured = {}
+
+    class SpyEnrichExecutor:
+        def __init__(self, max_workers, thread_name_prefix=None):
+            captured["max_workers"] = max_workers
+            captured["prefix"] = thread_name_prefix
+            self.max_workers = max_workers
+
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+        def submit(self, fn, *args, **kwargs):
+            class F:
+                def result(self_): return []
+            return F()
+
+    monkeypatch.setattr(enricher_module, "ThreadPoolExecutor", SpyEnrichExecutor)
+    monkeypatch.setattr(enricher_module, "wait", lambda pending, timeout, return_when: (set(pending), set()))
+
+    enrich_canonical_list(
+        canonical,
+        {"doc-a": [chunk_a], "doc-b": [chunk_b]},
+        case_id="case-test",
+    )
+
+    assert "max_workers" in captured
+    assert captured["prefix"] == "enrich-doc"
+    assert captured["max_workers"] <= 4
+
+
+def test_enrich_canonical_list_preserves_correct_doc_chunk_binding(monkeypatch):
+    """
+    Evidens-chunks skal komme fra det dokument LLM-resultatet faktisk stammer fra,
+    ikke fra et vilkårligt andet dokument (regression for chunk_list scope-fejl).
+    """
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 4)
+
+    canonical_a = make_canonical("01.01.2000-1001", archive_number="40 A 1", title="Vejret")
+    canonical_b = make_canonical("01.02.2000-2002", archive_number="40 B 2", title="Ledning")
+
+    chunk_a = make_chunk("doc-a", page=1, text="Akt 40A1 vedr. vejret")
+    chunk_b = make_chunk("doc-b", page=1, text="Akt 40B2 vedr. ledning")
+
+    def fake_enrich(doc_id, chunk_list, canonical_list, *args, **kwargs):
+        if doc_id == "doc-a":
+            return [{"archive_number": "40 A 1", "date_reference": "01.01.2000-1001", "confidence": 0.9}]
+        if doc_id == "doc-b":
+            return [{"archive_number": "40 B 2", "date_reference": "01.02.2000-2002", "confidence": 0.9}]
+        return []
+
+    monkeypatch.setattr(enricher_module, "_enrich_from_doc", fake_enrich)
+
+    result = enrich_canonical_list(
+        [canonical_a, canonical_b],
+        {"doc-a": [chunk_a], "doc-b": [chunk_b]},
+        case_id="case-test",
+    )
+
+    result_by_date = {s.date_reference: s for s in result}
+    assert result_by_date["01.01.2000-1001"].source_document == "doc-a"
+    assert result_by_date["01.02.2000-2002"].source_document == "doc-b"
+    # Evidens skal pege på det rigtige dokument
+    for srv in result:
+        for ev in srv.evidence:
+            assert ev.document_id == srv.source_document, (
+                f"Evidens-chunk {ev.chunk_id} tilhører {ev.document_id!r} "
+                f"men servitutten angiver {srv.source_document!r}"
+            )
+
+
+def test_enrich_canonical_list_sequential_when_concurrency_one(monkeypatch):
+    """EXTRACTION_MAX_CONCURRENCY=1 → ingen ThreadPoolExecutor bruges."""
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 1)
+
+    canonical = [make_canonical("01.01.2000-1-1", archive_number="40 F 439")]
+    chunk_a = make_chunk("doc-a", page=1, text="Akt 40F439 vejret")
+    llm_calls = []
+
+    def fake_enrich(doc_id, *args, **kwargs):
+        llm_calls.append(doc_id)
+        return []
+
+    monkeypatch.setattr(enricher_module, "_enrich_from_doc", fake_enrich)
+
+    with patch.object(enricher_module, "ThreadPoolExecutor", side_effect=AssertionError("must not use executor")):
+        enrich_canonical_list(canonical, {"doc-a": [chunk_a]}, case_id="case-test")
+
+    assert llm_calls == ["doc-a"]
+
+
+def test_enrich_canonical_list_writes_observability_summary(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 1)
+
+    canonical = [make_canonical("01.01.2000-1-1", archive_number="40 F 439", title="Vejret")]
+    chunk = make_chunk("doc-a", page=1, text="Akt 40F439 vejret")
+    captured = {}
+
+    def fake_enrich(doc_id, *args, **kwargs):
+        return [{"archive_number": "40 F 439", "date_reference": "01.01.2000-1-1", "confidence": 0.9}]
+
+    def fake_write(case_id, payload, run_id=None):
+        captured["case_id"] = case_id
+        captured["payload"] = payload
+        captured["run_id"] = run_id
+        return tmp_path / "extraction-summary.json"
+
+    monkeypatch.setattr(enricher_module, "_enrich_from_doc", fake_enrich)
+    monkeypatch.setattr(enricher_module.pipeline_observability, "write_extraction_run_summary", fake_write)
+
+    result = enrich_canonical_list(canonical, {"doc-a": [chunk]}, case_id="case-test")
+
+    assert len(result) == 1
+    assert captured["case_id"] == "case-test"
+    assert captured["payload"]["candidate_documents"] == 1
+    assert captured["payload"]["candidate_chunks_total"] >= 1
+    assert captured["payload"]["documents"][0]["doc_id"] == "doc-a"
+    assert captured["payload"]["documents"][0]["llm_items"] == 1
+
+
+# ---------------------------------------------------------------------------
+# DSS administrative page filter
+# ---------------------------------------------------------------------------
+
+def test_chunk_pages_skips_dss_header_pages():
+    """Sider med DSS-metadata-header skal ikke chunkes."""
+    dss_page = PageData(
+        page_number=1,
+        text="DSS 88303021 76_AR-A 31 Bulk Sort / Hvid 271876 I I",
+        confidence=0.9,
+    )
+    content_page = PageData(
+        page_number=2,
+        text="Deklaration om vejret til naboejendommen matr. nr. 5a tinglyst 15.06.2000.",
+        confidence=0.9,
+    )
+
+    chunks = chunk_pages([dss_page, content_page], doc_id="doc-test", case_id="case-test")
+
+    chunk_pages_used = {c.page for c in chunks}
+    assert 1 not in chunk_pages_used, "DSS-header-side må ikke chunkes"
+    assert 2 in chunk_pages_used, "Indholdsside skal chunkes"
+
+
+def test_chunk_pages_skips_dss_header_case_insensitive():
+    """DSS-filteret er case-insensitivt."""
+    dss_page = PageData(
+        page_number=1,
+        text="dss 12345678 76_B-A 204 bulk hvid 99999",
+        confidence=0.9,
+    )
+    chunks = chunk_pages([dss_page], doc_id="doc-test", case_id="case-test")
+    assert chunks == []
+
+
+def test_chunk_pages_keeps_non_dss_short_pages():
+    """Korte ikke-DSS-sider filtreres ikke af det administrative filter."""
+    short_page = PageData(
+        page_number=1,
+        text="Vejret til matr.nr. 5a.",
+        confidence=0.9,
+    )
+    chunks = chunk_pages([short_page], doc_id="doc-test", case_id="case-test")
+    assert len(chunks) >= 1

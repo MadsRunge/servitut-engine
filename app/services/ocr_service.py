@@ -7,6 +7,7 @@ Resten af systemet må kun kende PageData — ikke OCR-engine.
 """
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -17,7 +18,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
-from app.services import storage_service
+from app.services import pipeline_observability, storage_service
 from app.services.chunking_service import chunk_pages
 from app.services.document_classifier import classify_document
 from app.utils.text import clean_text
@@ -34,6 +35,10 @@ class OcrPipelineResult:
     reused_ocr_pdf: bool
     reused_pages: bool
     reused_chunks: bool
+    page_source: str
+    direct_text_coverage: float | None
+    total_duration_seconds: float
+    observability_path: str | None
 
 
 def _resolve_ocr_jobs() -> int:
@@ -41,6 +46,13 @@ def _resolve_ocr_jobs() -> int:
     if configured_jobs and configured_jobs > 0:
         return configured_jobs
     return max(1, min(os.cpu_count() or 1, 4))
+
+
+def _measure_direct_text_coverage(pages: List[PageData]) -> float:
+    if not pages:
+        return 0.0
+    usable_pages = sum(1 for page in pages if len(page.text) >= 50 and page.confidence >= 0.3)
+    return usable_pages / len(pages)
 
 
 def _estimate_confidence(text: str) -> float:
@@ -224,6 +236,65 @@ def _preserve_known_document_type(document_type: str) -> str | None:
     return None
 
 
+_DIRECT_TEXT_MIN_COVERAGE = 0.75  # fraction of pages that must have usable text to skip OCR
+
+
+def _try_extract_text_direct(pdf_path: Path) -> List[PageData] | None:
+    """
+    Forsøg tekstudtræk direkte fra original-PDF med pdfplumber uden at køre ocrmypdf.
+
+    Returnerer List[PageData] hvis mindst _DIRECT_TEXT_MIN_COVERAGE af siderne har
+    brugbar tekst (≥50 tegn med rimelig confidence). Returnerer None hvis PDF'en
+    kræver OCR (for mange billedsider uden tekstlag).
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        return None
+
+    try:
+        pages: List[PageData] = []
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for i, page in enumerate(pdf.pages):
+                raw_text = page.extract_text() or ""
+                text = clean_text(raw_text)
+                confidence = _estimate_confidence(text)
+                pages.append(
+                    PageData(
+                        page_number=i + 1,
+                        text=text,
+                        extraction_method="pdfplumber_direct",
+                        confidence=confidence,
+                    )
+                )
+    except Exception as exc:
+        logger.debug("Direkte tekstudtræk fejlede for %s: %s", pdf_path.name, exc)
+        return None
+
+    if not pages:
+        return None
+
+    usable = sum(1 for p in pages if len(p.text) >= 50 and p.confidence >= 0.3)
+    coverage = usable / len(pages)
+    if coverage >= _DIRECT_TEXT_MIN_COVERAGE:
+        logger.info(
+            "Direkte tekstudtræk: %d/%d sider brugbare (%.0f%%) — springer ocrmypdf over for %s",
+            usable,
+            len(pages),
+            coverage * 100,
+            pdf_path.name,
+        )
+        return pages
+
+    logger.info(
+        "Direkte tekstudtræk: %.0f%% dækning < %.0f%% tærskel — kører ocrmypdf for %s",
+        coverage * 100,
+        _DIRECT_TEXT_MIN_COVERAGE * 100,
+        pdf_path.name,
+    )
+    return None
+
+
 def _artifact_is_fresh(artifact_path: Path, dependency_paths: list[Path]) -> bool:
     if not artifact_path.exists():
         return False
@@ -244,26 +315,46 @@ def _load_or_create_pages(
     pdf_path: Path,
     ocr_pdf_path: Path,
     force: bool = False,
-) -> tuple[List[PageData], bool, bool]:
+) -> tuple[List[PageData], bool, bool, str, float | None]:
     pages_path = storage_service.get_ocr_path(case_id, doc_id)
-    reused_ocr_pdf = not force and _artifact_is_fresh(ocr_pdf_path, [pdf_path])
-    reused_pages = (
-        not force and _artifact_is_fresh(pages_path, [pdf_path, ocr_pdf_path])
-    )
 
-    if reused_ocr_pdf:
-        logger.info("Genbruger eksisterende ocr.pdf for %s", doc_id)
+    # Freshness check: pages are fresh when newer than original PDF.
+    # If ocr_pdf exists, also require pages to be newer than ocr_pdf.
+    # If ocr_pdf does NOT exist (direct path was used last time), only check against original PDF.
+    if not force:
+        if ocr_pdf_path.exists():
+            reused_pages = _artifact_is_fresh(pages_path, [pdf_path, ocr_pdf_path])
+        else:
+            reused_pages = _artifact_is_fresh(pages_path, [pdf_path])
     else:
-        run_ocrmypdf(pdf_path, ocr_pdf_path)
+        reused_pages = False
+
+    reused_ocr_pdf = not force and _artifact_is_fresh(ocr_pdf_path, [pdf_path])
 
     if reused_pages:
         logger.info("Genbruger eksisterende OCR-sider for %s", doc_id)
         pages = storage_service.load_ocr_pages(session, case_id, doc_id)
-    else:
-        pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
-        storage_service.save_ocr_pages(session, case_id, doc_id, pages)
+        direct_text_coverage = (
+            _measure_direct_text_coverage(pages)
+            if all(page.extraction_method == "pdfplumber_direct" for page in pages)
+            else None
+        )
+        return pages, reused_ocr_pdf, True, "reused_pages", direct_text_coverage
 
-    return pages, reused_ocr_pdf, reused_pages
+    # Fast path: prøv pdfplumber direkte på original-PDF
+    direct_pages = _try_extract_text_direct(pdf_path)
+    if direct_pages is not None:
+        storage_service.save_ocr_pages(session, case_id, doc_id, direct_pages)
+        return direct_pages, False, False, "pdfplumber_direct", _measure_direct_text_coverage(direct_pages)
+
+    # Fuld OCR-sti via ocrmypdf
+    if reused_ocr_pdf:
+        logger.info("Genbruger eksisterende ocr.pdf for %s", doc_id)
+    else:
+        run_ocrmypdf(pdf_path, ocr_pdf_path)
+    pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
+    storage_service.save_ocr_pages(session, case_id, doc_id, pages)
+    return pages, reused_ocr_pdf, False, ("reused_ocr_pdf" if reused_ocr_pdf else "ocrmypdf"), None
 
 
 def _load_or_create_chunks(
@@ -286,14 +377,20 @@ def _load_or_create_chunks(
 
 
 def run_document_pipeline(
-    session: Session, case_id: str, doc: Document, force: bool = False
+    session: Session,
+    case_id: str,
+    doc: Document,
+    force: bool = False,
+    run_id: str | None = None,
 ) -> OcrPipelineResult:
     pdf_path = Path(doc.file_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF-fil ikke fundet på disk: {pdf_path}")
 
+    pipeline_started_at = time.perf_counter()
     ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc.document_id)
-    pages, reused_ocr_pdf, reused_pages = _load_or_create_pages(
+    pages_started_at = time.perf_counter()
+    pages, reused_ocr_pdf, reused_pages, page_source, direct_text_coverage = _load_or_create_pages(
         session=session,
         case_id=case_id,
         doc_id=doc.document_id,
@@ -301,6 +398,8 @@ def run_document_pipeline(
         ocr_pdf_path=ocr_pdf_path,
         force=force,
     )
+    page_stage_duration = round(time.perf_counter() - pages_started_at, 3)
+    chunks_started_at = time.perf_counter()
     chunks, reused_chunks = _load_or_create_chunks(
         session=session,
         case_id=case_id,
@@ -308,6 +407,8 @@ def run_document_pipeline(
         pages=pages,
         force=force,
     )
+    chunk_stage_duration = round(time.perf_counter() - chunks_started_at, 3)
+    total_duration = round(time.perf_counter() - pipeline_started_at, 3)
 
     blank, low, _ = summarize_pages(pages)
     doc.pages = pages
@@ -323,6 +424,45 @@ def run_document_pipeline(
     doc.parse_status = "ocr_done"
     storage_service.save_document(session, doc)
 
+    observability_payload = {
+        "pipeline": "ocr",
+        "case_id": case_id,
+        "document_id": doc.document_id,
+        "filename": doc.filename,
+        "document_type": doc.document_type,
+        "page_count": len(pages),
+        "chunk_count": len(chunks),
+        "blank_pages": blank,
+        "low_conf_pages": low,
+        "page_source": page_source,
+        "direct_text_coverage": round(direct_text_coverage, 3) if direct_text_coverage is not None else None,
+        "reused_ocr_pdf": reused_ocr_pdf,
+        "reused_pages": reused_pages,
+        "reused_chunks": reused_chunks,
+        "ocr_jobs": _resolve_ocr_jobs(),
+        "ocr_batch_size": settings.OCR_BATCH_SIZE,
+        "page_stage_duration_seconds": page_stage_duration,
+        "chunk_stage_duration_seconds": chunk_stage_duration,
+        "total_duration_seconds": total_duration,
+    }
+    observability_path = pipeline_observability.write_ocr_run_summary(
+        case_id,
+        doc.document_id,
+        observability_payload,
+        run_id=run_id,
+    )
+    logger.info(
+        "OCR observability: case=%s doc=%s source=%s pages=%d chunks=%d direct_coverage=%s total=%.3fs path=%s",
+        case_id,
+        doc.document_id,
+        page_source,
+        len(pages),
+        len(chunks),
+        f"{direct_text_coverage:.0%}" if direct_text_coverage is not None else "n/a",
+        total_duration,
+        observability_path,
+    )
+
     return OcrPipelineResult(
         pages=pages,
         chunks=chunks,
@@ -331,6 +471,10 @@ def run_document_pipeline(
         reused_ocr_pdf=reused_ocr_pdf,
         reused_pages=reused_pages,
         reused_chunks=reused_chunks,
+        page_source=page_source,
+        direct_text_coverage=round(direct_text_coverage, 3) if direct_text_coverage is not None else None,
+        total_duration_seconds=total_duration,
+        observability_path=str(observability_path),
     )
 
 
