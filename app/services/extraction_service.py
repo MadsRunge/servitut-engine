@@ -12,6 +12,7 @@ from app.services.extraction import (
     _extract_document_servitutter,
     _extract_from_doc_chunks,
     _prescreeen_chunks,
+    extract_canonical_from_attest_segments,
     enrich_canonical_list,
 )
 from app.services import matrikel_service, storage_service
@@ -105,12 +106,14 @@ def extract_servitutter(
         attest_by_doc = {}
         for c in attest_chunks:
             attest_by_doc.setdefault(c.document_id, []).append(c)
-        canonical_list = _extract_from_doc_chunks(
+        canonical_list = extract_canonical_from_attest_segments(
+            session,
             attest_by_doc,
             case_id,
-            "tinglysningsattest",
             progress_callback=progress_callback,
         )
+        if session is not None:
+            storage_service.save_canonical_list(session, case_id, canonical_list)
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
     case = matrikel_service.sync_case_matrikler(session, case_id, attest_by_doc.keys())
@@ -163,10 +166,10 @@ def extract_canonical_from_attest(
     attest_by_doc: dict[str, list[Chunk]] = {}
     for c in attest_chunks:
         attest_by_doc.setdefault(c.document_id, []).append(c)
-    return _extract_from_doc_chunks(
+    return extract_canonical_from_attest_segments(
+        session,
         attest_by_doc,
         case_id,
-        "tinglysningsattest",
         progress_callback=progress_callback,
     )
 

@@ -71,6 +71,10 @@ class DocumentTable(SQLModel, table=True):
     pages: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
+    # JSONB: attest-segmenter, extraction-status og mellemresultater
+    attest_pipeline_state: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON_VALUE, nullable=True)
+    )
 
 
 class ChunkTable(SQLModel, table=True):

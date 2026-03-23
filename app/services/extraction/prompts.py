@@ -2,7 +2,7 @@ from app.core.config import settings
 
 
 def _load_prompt(source_type: str = "akt") -> str:
-    if source_type == "tinglysningsattest":
+    if source_type.startswith("tinglysningsattest"):
         path = settings.prompts_path / "extract_tinglysningsattest.txt"
         if path.exists():
             return path.read_text(encoding="utf-8")

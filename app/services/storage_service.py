@@ -29,6 +29,7 @@ from app.db.models import (
 )
 from app.models.case import Case, Matrikel
 from app.models.chunk import Chunk
+from app.models.attest import AttestPipelineState
 from app.models.document import Document, PageData
 from app.models.job import Job
 from app.models.declaration import Servituterklaring, ServituterklaeringRow
@@ -461,6 +462,9 @@ def list_jobs(
 
 def save_document(session: Session, doc: Document) -> None:
     row = _doc_to_row(doc)
+    existing = session.get(DocumentTable, doc.document_id)
+    if existing is not None:
+        row.attest_pipeline_state = existing.attest_pipeline_state
     session.merge(row)
     session.commit()
     logger.debug(f"Saved document {doc.document_id}")
@@ -555,6 +559,46 @@ def load_ocr_pages(
     if row is None or row.case_id != case_id or not row.pages:
         return []
     return [PageData(**p) for p in row.pages]
+
+
+# ---------------------------------------------------------------------------
+# Attest-pipeline-state
+# ---------------------------------------------------------------------------
+
+def save_attest_pipeline_state(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    state: AttestPipelineState | dict | None,
+) -> None:
+    row = session.get(DocumentTable, doc_id)
+    if row is None or row.case_id != case_id:
+        return
+    if state is None:
+        row.attest_pipeline_state = None
+    elif isinstance(state, AttestPipelineState):
+        row.attest_pipeline_state = state.model_dump(mode="json")
+    else:
+        row.attest_pipeline_state = state
+    session.add(row)
+    session.commit()
+    logger.debug(f"Saved attest pipeline state for doc {doc_id}")
+
+
+def load_attest_pipeline_state(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[AttestPipelineState]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
+    row = session.get(DocumentTable, doc_id)
+    if row is None or row.case_id != case_id or row.attest_pipeline_state is None:
+        return None
+    return AttestPipelineState(**row.attest_pipeline_state)
 
 
 # ---------------------------------------------------------------------------

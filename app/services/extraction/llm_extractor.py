@@ -127,10 +127,63 @@ def _find_evidence_chunk(chunks: List[Chunk], doc_id: str) -> List[Evidence]:
 
 
 def _max_tokens_for_source_type(source_type: str) -> int:
-    if source_type == "tinglysningsattest":
+    if source_type.startswith("tinglysningsattest"):
         # A long attest can contain dozens of servitutter. Give it more room than akt enrichment.
         return 8192
     return 4096
+
+
+def _scope_source_for_type(source_type: str) -> str:
+    if source_type.startswith("tinglysningsattest"):
+        return "attest"
+    return source_type
+
+
+def _build_servitutter_from_items(
+    extracted: list,
+    *,
+    case_id: str,
+    doc_id: str,
+    source_type: str,
+    chunk_list: List[Chunk],
+    priority_offset: int = 0,
+) -> List[Servitut]:
+    servitutter: List[Servitut] = []
+    for i, item in enumerate(extracted):
+        date_reference = coerce_optional_str(item.get("date_reference"))
+        scope_source = coerce_optional_str(item.get("scope_source")) or _scope_source_for_type(
+            source_type
+        )
+        servitut = Servitut(
+            easement_id=generate_servitut_id(),
+            case_id=case_id,
+            source_document=doc_id,
+            priority=priority_offset + i,
+            date_reference=date_reference,
+            registered_at=parse_registered_at(item.get("registered_at"), date_reference),
+            archive_number=coerce_optional_str(item.get("archive_number")),
+            title=coerce_optional_str(item.get("title")),
+            summary=coerce_optional_str(item.get("summary")),
+            beneficiary=coerce_optional_str(item.get("beneficiary")),
+            disposition_type=coerce_optional_str(item.get("disposition_type")),
+            legal_type=coerce_optional_str(item.get("legal_type")),
+            construction_relevance=item.get("construction_relevance", False) or False,
+            construction_impact=coerce_optional_str(item.get("construction_impact")),
+            action_note=coerce_optional_str(item.get("action_note")),
+            applies_to_parcel_numbers=coerce_str_list(item.get("applies_to_parcel_numbers")),
+            raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
+            or coerce_str_list(item.get("applies_to_parcel_numbers")),
+            raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
+            or coerce_optional_str(item.get("scope_basis")),
+            scope_source=scope_source,
+            scope_basis=coerce_optional_str(item.get("scope_basis")),
+            scope_confidence=item.get("scope_confidence"),
+            confidence=float(item.get("confidence", 0.5) or 0.5),
+            evidence=_find_evidence_chunk(chunk_list, doc_id),
+        )
+        servitutter.append(servitut)
+        logger.info(f"Extracted: {servitut.title} (conf={servitut.confidence})")
+    return servitutter
 
 
 def _extract_document_servitutter(
@@ -202,39 +255,13 @@ def _extract_document_servitutter(
         )
         return []
 
-    servitutter: List[Servitut] = []
-    for i, item in enumerate(extracted):
-        date_reference = coerce_optional_str(item.get("date_reference"))
-        scope_source = coerce_optional_str(item.get("scope_source")) or source_type
-        servitut = Servitut(
-            easement_id=generate_servitut_id(),
-            case_id=case_id,
-            source_document=doc_id,
-            priority=i,
-            date_reference=date_reference,
-            registered_at=parse_registered_at(item.get("registered_at"), date_reference),
-            archive_number=coerce_optional_str(item.get("archive_number")),
-            title=coerce_optional_str(item.get("title")),
-            summary=coerce_optional_str(item.get("summary")),
-            beneficiary=coerce_optional_str(item.get("beneficiary")),
-            disposition_type=coerce_optional_str(item.get("disposition_type")),
-            legal_type=coerce_optional_str(item.get("legal_type")),
-            construction_relevance=item.get("construction_relevance", False) or False,
-            construction_impact=coerce_optional_str(item.get("construction_impact")),
-            action_note=coerce_optional_str(item.get("action_note")),
-            applies_to_parcel_numbers=coerce_str_list(item.get("applies_to_parcel_numbers")),
-            raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
-            or coerce_str_list(item.get("applies_to_parcel_numbers")),
-            raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
-            or coerce_optional_str(item.get("scope_basis")),
-            scope_source=scope_source,
-            scope_basis=coerce_optional_str(item.get("scope_basis")),
-            scope_confidence=item.get("scope_confidence"),
-            confidence=float(item.get("confidence", 0.5) or 0.5),
-            evidence=_find_evidence_chunk(chunk_list, doc_id),
-        )
-        servitutter.append(servitut)
-        logger.info(f"Extracted: {servitut.title} (conf={servitut.confidence})")
+    servitutter = _build_servitutter_from_items(
+        extracted,
+        case_id=case_id,
+        doc_id=doc_id,
+        source_type=source_type,
+        chunk_list=chunk_list,
+    )
 
     _emit_progress(
         callback,

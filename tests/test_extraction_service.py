@@ -2,10 +2,11 @@ from unittest.mock import patch
 from datetime import date
 
 from app.core.config import settings
+from app.models.attest import AttestPipelineState, AttestSegment
 from app.models.chunk import Chunk
 from app.models.document import Document
-from app.models.servitut import Servitut
-from app.services.extraction import llm_extractor
+from app.models.servitut import Evidence, Servitut
+from app.services.extraction import attest_pipeline, llm_extractor
 from app.services.extraction.enricher import select_candidate_chunks
 from app.services.extraction.merger import _enrich_canonical
 from app.services import extraction_service
@@ -349,15 +350,390 @@ def test_extract_canonical_from_attest_preloads_documents(monkeypatch):
     )
 
     with patch(
-        "app.services.extraction_service._extract_from_doc_chunks",
+        "app.services.extraction_service.extract_canonical_from_attest_segments",
         return_value=[make_canonical("01.01.2000-1-1")],
     ) as mock_extract:
         result = extraction_service.extract_canonical_from_attest(None, "case-test")
 
     assert len(result) == 1
-    attest_by_doc = mock_extract.call_args.args[0]
+    attest_by_doc = mock_extract.call_args.args[1]
     assert list(attest_by_doc) == ["doc-attest"]
     assert len(attest_by_doc["doc-attest"]) == 2
+
+
+def test_build_attest_segments_splits_large_attest_with_overlap():
+    chunks = [
+        make_chunk(
+            "doc-attest",
+            page=page,
+            text=f"Tinglysningsattest side {page}\nServitut tekst for side {page}",
+        )
+        for page in range(1, 7)
+    ]
+
+    segments = attest_pipeline.build_attest_segments(
+        "case-test",
+        "doc-attest",
+        chunks,
+        max_segment_pages=2,
+        overlap_pages=1,
+        max_segment_chars=10_000,
+    )
+
+    assert [(segment.page_start, segment.page_end) for segment in segments] == [
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        (5, 6),
+    ]
+    covered_pages = {page for segment in segments for page in segment.page_numbers}
+    assert covered_pages == {1, 2, 3, 4, 5, 6}
+
+
+def test_merge_attest_servitutter_deduplicates_overlapping_segments():
+    left = Servitut(
+        easement_id="srv-left",
+        case_id="case-test",
+        source_document="doc-attest",
+        date_reference="01.01.2000-1-1",
+        title="Vejret",
+        raw_parcel_references=["1a"],
+        applies_to_parcel_numbers=["1a"],
+        confidence=0.6,
+        evidence=[Evidence(chunk_id="c1", document_id="doc-attest", page=1, text_excerpt="side 1")],
+    )
+    right = Servitut(
+        easement_id="srv-right",
+        case_id="case-test",
+        source_document="doc-attest",
+        date_reference="01.01.2000-1-1",
+        archive_number="40 B 405",
+        title="Vejret og adgang",
+        raw_parcel_references=["1b"],
+        applies_to_parcel_numbers=["1b"],
+        raw_scope_text="Vedr. matr.nr. 1a og 1b",
+        confidence=0.9,
+        evidence=[Evidence(chunk_id="c2", document_id="doc-attest", page=2, text_excerpt="side 2")],
+    )
+
+    merged = attest_pipeline.merge_attest_servitutter([left, right])
+
+    assert len(merged) == 1
+    assert merged[0].archive_number == "40 B 405"
+    assert merged[0].title == "Vejret og adgang"
+    assert merged[0].applies_to_parcel_numbers == ["1a", "1b"]
+    assert merged[0].raw_parcel_references == ["1a", "1b"]
+    assert len(merged[0].evidence) == 2
+
+
+def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypatch):
+    chunk = make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret")
+    cached = make_canonical("09.02.1957-490-40", archive_number="40 B 405", title="Vejret")
+    state = AttestPipelineState(
+        case_id="case-test",
+        document_id="doc-attest",
+        source_signature=attest_pipeline._source_signature([chunk]),
+        segments=[
+            AttestSegment(
+                segment_id="doc-attest-segment-0000",
+                case_id="case-test",
+                document_id="doc-attest",
+                segment_index=0,
+                page_start=1,
+                page_end=1,
+                page_numbers=[1],
+                text="[Side 1]\n09.02.1957-490-40 vejret",
+                text_hash="hash",
+                extraction_status="completed",
+                extracted_servitutter=[cached.model_dump(mode="json")],
+            )
+        ],
+    )
+    events = []
+
+    monkeypatch.setattr(
+        attest_pipeline.storage_service,
+        "load_attest_pipeline_state",
+        lambda session, case_id, doc_id: state,
+    )
+    monkeypatch.setattr(
+        attest_pipeline.storage_service,
+        "save_attest_pipeline_state",
+        lambda session, case_id, doc_id, current_state: None,
+    )
+    monkeypatch.setattr(
+        attest_pipeline,
+        "generate_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")),
+    )
+
+    result = attest_pipeline.extract_canonical_from_attest_segments(
+        None,
+        {"doc-attest": [chunk]},
+        "case-test",
+        progress_callback=events.append,
+    )
+
+    assert len(result) == 1
+    assert result[0].date_reference == "09.02.1957-490-40"
+    assert [event["stage"] for event in events] == [
+        "indexed_attest",
+        "extracting_attest_segment",
+        "merging_attest_segments",
+        "completed",
+    ]
+    assert events[1]["segment_status"] == "cached"
+
+
+def test_extract_canonical_from_attest_segments_persists_segment_results(monkeypatch):
+    chunks = [
+        make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
+        make_chunk("doc-attest", page=2, text="10.02.1957-491-40 ledning"),
+    ]
+    built_segments = [
+        AttestSegment(
+            segment_id="doc-attest-segment-0000",
+            case_id="case-test",
+            document_id="doc-attest",
+            segment_index=0,
+            page_start=1,
+            page_end=1,
+            page_numbers=[1],
+            text="[Side 1]\n09.02.1957-490-40 vejret",
+            text_hash="hash-1",
+        ),
+        AttestSegment(
+            segment_id="doc-attest-segment-0001",
+            case_id="case-test",
+            document_id="doc-attest",
+            segment_index=1,
+            page_start=2,
+            page_end=2,
+            page_numbers=[2],
+            text="[Side 2]\n10.02.1957-491-40 ledning",
+            text_hash="hash-2",
+        ),
+    ]
+    saved_states = []
+    state_store = {"value": None}
+
+    monkeypatch.setattr(
+        attest_pipeline.storage_service,
+        "load_attest_pipeline_state",
+        lambda session, case_id, doc_id: state_store["value"],
+    )
+
+    def _save_state(session, case_id, doc_id, state):
+        state_store["value"] = state
+        saved_states.append(state.model_copy(deep=True))
+
+    monkeypatch.setattr(attest_pipeline.storage_service, "save_attest_pipeline_state", _save_state)
+    monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
+    monkeypatch.setattr(
+        attest_pipeline,
+        "generate_text",
+        lambda prompt, **kwargs: (
+            '[{"date_reference":"09.02.1957-490-40","title":"Vejret","confidence":0.8}]'
+            if "Side 1" in prompt
+            else '[{"date_reference":"10.02.1957-491-40","title":"Ledning","confidence":0.7}]'
+        ),
+    )
+
+    result = attest_pipeline.extract_canonical_from_attest_segments(
+        None,
+        {"doc-attest": chunks},
+        "case-test",
+    )
+
+    assert [servitut.date_reference for servitut in result] == [
+        "09.02.1957-490-40",
+        "10.02.1957-491-40",
+    ]
+    assert len(saved_states) == 3
+    assert all(
+        segment.extraction_status == "completed"
+        for segment in state_store["value"].segments
+    )
+    assert state_store["value"].segments[0].extracted_servitutter
+    assert state_store["value"].segments[1].extracted_servitutter
+
+
+def test_extract_canonical_from_attest_segments_raises_on_partial_failure(monkeypatch):
+    chunks = [
+        make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
+        make_chunk("doc-attest", page=2, text="10.02.1957-491-40 ledning"),
+    ]
+    built_segments = [
+        AttestSegment(
+            segment_id="doc-attest-segment-0000",
+            case_id="case-test",
+            document_id="doc-attest",
+            segment_index=0,
+            page_start=1,
+            page_end=1,
+            page_numbers=[1],
+            text="[Side 1]\n09.02.1957-490-40 vejret",
+            text_hash="hash-1",
+        ),
+        AttestSegment(
+            segment_id="doc-attest-segment-0001",
+            case_id="case-test",
+            document_id="doc-attest",
+            segment_index=1,
+            page_start=2,
+            page_end=2,
+            page_numbers=[2],
+            text="[Side 2]\n10.02.1957-491-40 ledning",
+            text_hash="hash-2",
+        ),
+    ]
+    state_store = {"value": None}
+    events = []
+
+    monkeypatch.setattr(
+        attest_pipeline.storage_service,
+        "load_attest_pipeline_state",
+        lambda session, case_id, doc_id: state_store["value"],
+    )
+    monkeypatch.setattr(
+        attest_pipeline.storage_service,
+        "save_attest_pipeline_state",
+        lambda session, case_id, doc_id, state: state_store.__setitem__("value", state.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
+
+    def _generate_text(prompt, **kwargs):
+        if "Side 1" in prompt:
+            return '[{"date_reference":"09.02.1957-490-40","title":"Vejret","confidence":0.8}]'
+        raise RuntimeError("temporary llm failure")
+
+    monkeypatch.setattr(attest_pipeline, "generate_text", _generate_text)
+
+    with patch(
+        "app.services.extraction_service.storage_service.save_canonical_list",
+        side_effect=AssertionError("canonical cache must not be saved on partial failure"),
+    ):
+        try:
+            attest_pipeline.extract_canonical_from_attest_segments(
+                None,
+                {"doc-attest": chunks},
+                "case-test",
+                progress_callback=events.append,
+            )
+            assert False, "Expected partial failure to raise"
+        except attest_pipeline.AttestPipelineIncompleteError as exc:
+            assert exc.incomplete_docs == [
+                {"document_id": "doc-attest", "failed_segments": 1, "total_segments": 2}
+            ]
+
+    assert state_store["value"] is not None
+    statuses = [segment.extraction_status for segment in state_store["value"].segments]
+    assert statuses == ["completed", "failed"]
+    assert [event["stage"] for event in events] == [
+        "segmenting_attest",
+        "indexed_attest",
+        "extracting_attest_segment",
+        "extracting_attest_segment",
+        "attest_segment_failed",
+        "merging_attest_segments",
+        "failed",
+    ]
+
+
+def test_extract_servitutter_does_not_save_partial_canonical_cache(monkeypatch):
+    attest_chunk = make_chunk("doc-attest", page=1, text="attest side 1")
+    akt_chunk = make_chunk("doc-akt", page=1, text="akt side 1")
+
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-attest",
+                case_id=case_id,
+                filename="attest.pdf",
+                file_path="storage/cases/case-test/documents/doc-attest/original.pdf",
+                document_type="tinglysningsattest",
+            ),
+            Document(
+                document_id="doc-akt",
+                case_id=case_id,
+                filename="akt.pdf",
+                file_path="storage/cases/case-test/documents/doc-akt/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
+
+    with patch(
+        "app.services.extraction_service.extract_canonical_from_attest_segments",
+        side_effect=attest_pipeline.AttestPipelineIncompleteError(
+            "case-test",
+            [{"document_id": "doc-attest", "failed_segments": 1, "total_segments": 2}],
+        ),
+    ), patch(
+        "app.services.extraction_service.storage_service.save_canonical_list",
+        side_effect=AssertionError("partial canonical result must not be cached"),
+    ):
+        try:
+            extraction_service.extract_servitutter(
+                None,
+                [attest_chunk, akt_chunk],
+                "case-test",
+            )
+            assert False, "Expected extraction to fail on partial canonical extraction"
+        except attest_pipeline.AttestPipelineIncompleteError:
+            pass
+
+
+def test_extract_servitutter_uses_segmented_attest_pipeline(monkeypatch):
+    attest_chunk = make_chunk("doc-attest", page=1, text="attest side 1")
+    akt_chunk = make_chunk("doc-akt", page=1, text="akt side 1")
+    canonical = [make_canonical("01.01.2000-1-1", title="Vejret")]
+
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-attest",
+                case_id=case_id,
+                filename="attest.pdf",
+                file_path="storage/cases/case-test/documents/doc-attest/original.pdf",
+                document_type="tinglysningsattest",
+            ),
+            Document(
+                document_id="doc-akt",
+                case_id=case_id,
+                filename="akt.pdf",
+                file_path="storage/cases/case-test/documents/doc-akt/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        extraction_service.matrikel_service,
+        "sync_case_matrikler",
+        lambda session, case_id, doc_ids: None,
+    )
+    monkeypatch.setattr(
+        extraction_service,
+        "enrich_canonical_list",
+        lambda canonical_list, akt_by_doc, case_id, **kwargs: canonical_list,
+    )
+
+    with patch(
+        "app.services.extraction_service.extract_canonical_from_attest_segments",
+        return_value=canonical,
+    ) as mock_extract:
+        result = extraction_service.extract_servitutter(
+            None,
+            [attest_chunk, akt_chunk],
+            "case-test",
+        )
+
+    assert [servitut.date_reference for servitut in result] == ["01.01.2000-1-1"]
+    attest_by_doc = mock_extract.call_args.args[1]
+    assert list(attest_by_doc) == ["doc-attest"]
 
 
 def make_canonical(date_reference: str, archive_number: str = None, title: str = "Test") -> Servitut:

@@ -1,3 +1,9 @@
+from app.services.extraction.attest_pipeline import (
+    AttestPipelineIncompleteError,
+    build_attest_segments,
+    extract_canonical_from_attest_segments,
+    merge_attest_servitutter,
+)
 from app.services.extraction.enricher import (
     analyze_candidate_selection,
     build_scoring_signals,
@@ -31,6 +37,8 @@ from app.services.extraction.prompts import _load_prompt
 
 __all__ = [
     "ProgressCallback",
+    "AttestPipelineIncompleteError",
+    "build_attest_segments",
     "_build_chunks_text",
     "_dedup_akt_servitutter",
     "_drain_progress_queue",
@@ -50,7 +58,9 @@ __all__ = [
     "build_scoring_signal_catalog",
     "describe_scoring_inputs",
     "enrich_canonical_list",
+    "extract_canonical_from_attest_segments",
     "get_chunk_scoring_rules",
+    "merge_attest_servitutter",
     "score_chunks",
     "select_candidate_chunks",
 ]
