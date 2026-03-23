@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     REPORT_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: int = 120
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/servitut"
+    REDIS_URL: str = "redis://localhost:6379/0"
     STORAGE_DIR: str = "storage"
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000

@@ -1,20 +1,26 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from app.api.dependencies.auth import get_current_user
 from app.db.database import get_session
 from app.models.chunk import Chunk
-from app.models.document import Document, PageData
+from app.models.document import PageData
+from app.models.job import Job
 from app.models.user import User
 from app.services import case_service, storage_service
-from app.services.ocr_service import run_document_pipeline
+from app.utils.ids import generate_job_id
+from app.worker.tasks import run_ocr_task
 
 router = APIRouter()
 
 
-@router.post("/{case_id}/documents/{doc_id}/ocr", response_model=Document)
+@router.post(
+    "/{case_id}/documents/{doc_id}/ocr",
+    response_model=Job,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def run_ocr(
     case_id: str,
     doc_id: str,
@@ -35,18 +41,38 @@ def run_ocr(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    job = Job(
+        id=generate_job_id(),
+        case_id=case_id,
+        task_type="ocr",
+        status="pending",
+        result_data={
+            "document_id": doc_id,
+            "message": "OCR job queued",
+        },
+    )
+    storage_service.save_job(session, job)
+
     try:
         doc.parse_status = "processing"
         storage_service.save_document(session, doc)
-        result = run_document_pipeline(session, case_id, doc)
-        doc.pages = result.pages
-        doc.chunk_count = len(result.chunks)
-    except Exception as e:
-        doc.parse_status = "error"
+        run_ocr_task.delay(job.id, case_id, doc_id)
+    except Exception as exc:
+        doc.parse_status = "pending"
         storage_service.save_document(session, doc)
-        raise HTTPException(status_code=500, detail=str(e))
+        job.status = "failed"
+        job.result_data = {
+            "document_id": doc_id,
+            "message": "Failed to queue OCR job",
+            "error": str(exc),
+        }
+        storage_service.save_job(session, job)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not queue OCR job",
+        )
 
-    return doc
+    return job
 
 
 @router.get("/{case_id}/documents/{doc_id}/pages", response_model=List[PageData])

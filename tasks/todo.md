@@ -1,3 +1,17 @@
+# Alembic and local PostgreSQL setup
+
+- [x] Add Alembic configuration and a first migration that captures the current PostgreSQL schema.
+- [ ] Adjust app startup so PostgreSQL schema changes are not silently handled by `create_all()`.
+- [ ] Add local PostgreSQL bootstrap via Docker Compose.
+- [ ] Document `DATABASE_URL`, local Postgres startup, and Alembic migration commands in `.env.example` and `README.md`.
+- [ ] Verify the migration setup with targeted commands and record the outcome.
+
+## Review
+
+Progress:
+- The initial Alembic baseline now matches the current ORM schema, including the new `jobs` table used by Celery-backed OCR and extraction polling.
+- Verified the migration renders valid PostgreSQL DDL with `./.venv/bin/python -m alembic upgrade head --sql`.
+
 # Authorization hardening for case-scoped routes
 
 - [x] Add a shared `verify_case_ownership` helper in `app/services/case_service.py` that returns the case or raises `HTTPException(403, "Forbidden")`.
@@ -78,3 +92,28 @@ Verification:
 - Verified targeted schema-sensitive suites with `./.venv/bin/python -m pytest -q tests/test_report_generation.py tests/test_report_editor_service.py tests/test_matrikel_service.py tests/test_extraction_schema.py tests/test_document_classifier.py`
 - Verified full repo with `./.venv/bin/python -m pytest -q`
 - Result: `142 passed, 6 warnings`
+
+# Celery worker architecture
+
+- [x] Inspect current OCR/extraction API flow, DB session patterns, and existing job-style models before implementation.
+- [x] Add `celery` and `redis` dependencies plus `REDIS_URL` configuration.
+- [x] Introduce a background job model and DB table with storage helpers for create/read/update.
+- [x] Implement Celery app and worker tasks for OCR and extraction with status/result updates in PostgreSQL.
+- [x] Refactor OCR and extraction routes to enqueue jobs and return `202 Accepted` payloads instead of blocking.
+- [x] Add a polling endpoint for job status under the case scope.
+- [x] Run targeted verification and document outcomes here.
+
+## Review
+
+Outcome:
+- Added a generic `Job` DTO plus a `jobs` SQLModel table so OCR and extraction can be tracked in PostgreSQL with `pending`, `processing`, `completed`, and `failed` states.
+- Added `app/worker/celery_app.py` and `app/worker/tasks.py`; worker tasks now open their own DB sessions, call the existing OCR/extraction services, and persist status/result updates back to the job table.
+- Refactored `POST /cases/{case_id}/documents/{doc_id}/ocr` and `POST /cases/{case_id}/extract` so they enqueue Celery work and immediately return `202 Accepted` with the new job payload.
+- Added `GET /cases/{case_id}/jobs/{job_id}` for frontend polling, still protected by the existing case ownership guard.
+- Updated `.env.example`, dependency metadata, and API tests so the new Redis/Celery layer is part of the documented runtime contract.
+
+Verification:
+- Synced dependencies with `uv sync --extra dev` to install `celery` and `redis`.
+- Verified the async route flow with `./.venv/bin/python -m pytest -q tests/test_documents_api.py tests/test_jobs_api.py tests/test_auth_api.py`
+- Verified the full repository with `./.venv/bin/python -m pytest -q`
+- Result: `148 passed, 6 warnings`

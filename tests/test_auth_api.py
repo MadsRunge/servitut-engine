@@ -148,6 +148,7 @@ def test_get_report_returns_404_for_foreign_case_report():
         ("GET", "/cases/{case_id}/documents/doc-foreign/pages", {}),
         ("GET", "/cases/{case_id}/documents/doc-foreign/chunks", {}),
         ("POST", "/cases/{case_id}/extract", {}),
+        ("GET", "/cases/{case_id}/jobs/job-foreign", {}),
         ("GET", "/cases/{case_id}/servitutter", {}),
         ("POST", "/cases/{case_id}/reports", {}),
         ("GET", "/cases/{case_id}/reports", {}),

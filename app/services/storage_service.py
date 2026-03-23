@@ -21,6 +21,7 @@ from app.db.models import (
     CaseTable,
     ChunkTable,
     DocumentTable,
+    JobTable,
     ReportTable,
     ServitutTable,
     TmvJobTable,
@@ -28,6 +29,7 @@ from app.db.models import (
 from app.models.case import Case, Matrikel
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
+from app.models.job import Job
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Evidence, Servitut
 from app.models.tmv_job import TmvJob
@@ -233,6 +235,27 @@ def _row_to_servitut(row: ServitutTable) -> Servitut:
     )
 
 
+def _job_to_row(job: Job) -> JobTable:
+    d = job.model_dump(mode="json")
+    return JobTable(
+        id=d["id"],
+        case_id=d["case_id"],
+        task_type=d["task_type"],
+        status=d["status"],
+        result_data=d.get("result_data"),
+    )
+
+
+def _row_to_job(row: JobTable) -> Job:
+    return Job(
+        id=row.id,
+        case_id=row.case_id,
+        task_type=row.task_type,
+        status=row.status,
+        result_data=row.result_data,
+    )
+
+
 def _report_to_row(report: Report) -> ReportTable:
     d = report.model_dump(mode="json")
     return ReportTable(
@@ -378,7 +401,7 @@ def delete_case(
     row = _load_case_row(session, case_id, owner_user_id=owner_user_id)
     if row is None:
         return False
-    for table in (TmvJobTable, ReportTable, ServitutTable, ChunkTable, DocumentTable):
+    for table in (TmvJobTable, JobTable, ReportTable, ServitutTable, ChunkTable, DocumentTable):
         session.exec(delete(table).where(table.case_id == case_id))
     session.delete(row)
     session.commit()
@@ -386,6 +409,44 @@ def delete_case(
     if case_dir.exists():
         shutil.rmtree(case_dir)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+def save_job(session: Session, job: Job) -> None:
+    session.merge(_job_to_row(job))
+    session.commit()
+
+
+def load_job(
+    session: Session,
+    case_id: str,
+    job_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Job]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
+    row = session.get(JobTable, job_id)
+    if row is None or row.case_id != case_id:
+        return None
+    return _row_to_job(row)
+
+
+def list_jobs(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Job]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
+    rows = session.exec(select(JobTable).where(JobTable.case_id == case_id)).all()
+    return [_row_to_job(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

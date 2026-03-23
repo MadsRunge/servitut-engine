@@ -3,16 +3,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, cases, documents, extraction, ocr, reports
+from app.api.routes import auth, cases, documents, extraction, jobs, ocr, reports
 from app.core.logging import setup_logging
-from app.db.database import create_tables
+from app.db.database import initialize_database
 
 setup_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_tables()
+    initialize_database()
     yield
 
 
@@ -33,6 +33,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(cases.router, prefix="/cases", tags=["cases"])
 app.include_router(documents.router, prefix="/cases", tags=["documents"])
+app.include_router(jobs.router, prefix="/cases", tags=["jobs"])
 app.include_router(ocr.router, prefix="/cases", tags=["ocr"])
 app.include_router(extraction.router, prefix="/cases", tags=["extraction"])
 app.include_router(reports.router, prefix="/cases", tags=["reports"])

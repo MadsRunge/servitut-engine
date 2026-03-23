@@ -6,12 +6,10 @@ from fastapi.testclient import TestClient
 from app.api.main import app
 from app.core.config import settings
 from app.db.database import create_tables, get_session_ctx, reset_engine_cache
-from app.models.chunk import Chunk
-from app.models.document import Document, PageData
+from app.models.document import Document
 from app.services.auth_service import build_access_token, create_user
 from app.services import storage_service
 from app.services.case_service import add_document_to_case, create_case
-from app.services.ocr_service import OcrPipelineResult
 
 
 client = TestClient(app)
@@ -86,47 +84,25 @@ def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
         add_document_to_case(session, case.case_id, doc_id)
         token = build_access_token(user)
 
-    pages = [PageData(page_number=1, text="OCR tekst", confidence=0.9)]
-    chunks = [
-        Chunk(
-            chunk_id="chunk-1",
-            document_id=doc_id,
-            case_id=case.case_id,
-            page=1,
-            text="OCR tekst",
-            chunk_index=0,
-            char_start=0,
-            char_end=9,
-        )
-    ]
-
-    def fake_pipeline(session, case_id: str, pipeline_doc: Document):
-        pipeline_doc.pages = pages
-        pipeline_doc.page_count = 1
-        pipeline_doc.chunk_count = 1
-        pipeline_doc.ocr_blank_pages = 0
-        pipeline_doc.ocr_low_conf_pages = 0
-        pipeline_doc.document_type = "akt"
-        pipeline_doc.parse_status = "ocr_done"
-        storage_service.save_document(session, pipeline_doc)
-        return OcrPipelineResult(
-            pages=pages,
-            chunks=chunks,
-            blank_pages=0,
-            low_conf_pages=0,
-            reused_ocr_pdf=False,
-            reused_pages=False,
-            reused_chunks=False,
-        )
-
-    with patch("app.api.routes.ocr.run_document_pipeline", side_effect=fake_pipeline):
+    with patch("app.api.routes.ocr.run_ocr_task.delay") as mock_delay:
         response = client.post(
             f"/cases/{case.case_id}/documents/{doc_id}/ocr",
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     payload = response.json()
-    assert payload["parse_status"] == "ocr_done"
-    assert payload["page_count"] == 1
-    assert payload["chunk_count"] == 1
+    assert payload["task_type"] == "ocr"
+    assert payload["status"] == "pending"
+    assert payload["case_id"] == case.case_id
+    assert payload["result_data"]["document_id"] == doc_id
+    mock_delay.assert_called_once_with(payload["id"], case.case_id, doc_id)
+
+    with get_session_ctx() as session:
+        saved_doc = storage_service.load_document(session, case.case_id, doc_id)
+        saved_job = storage_service.load_job(session, case.case_id, payload["id"])
+
+    assert saved_doc is not None
+    assert saved_doc.parse_status == "processing"
+    assert saved_job is not None
+    assert saved_job.status == "pending"

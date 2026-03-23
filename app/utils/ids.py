@@ -18,6 +18,10 @@ def generate_report_id() -> str:
     return "rep-" + uuid.uuid4().hex[:8]
 
 
+def generate_job_id() -> str:
+    return "job-" + uuid.uuid4().hex[:8]
+
+
 def generate_chunk_id(doc_id: str, page: int, chunk_index: int) -> str:
     raw = f"{doc_id}:{page}:{chunk_index}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]

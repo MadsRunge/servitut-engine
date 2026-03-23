@@ -9,3 +9,4 @@
 - When feedback refers to the final deliverable, map it to the exact workflow stage before implementing; post-generation editing belongs after report generation, not inside review or generic feedback docs.
 - When migrating a codebase from file storage to session-based SQLModel services, finish the signature migration end-to-end in Streamlit and tests the same round; otherwise old call sites will silently preserve the broken path.
 - For database-backed tests, never bind the engine irrevocably at import time when settings are monkeypatched in tests; use a lazy engine factory plus explicit cache reset so SQLite isolation actually takes effect.
+- Before wiring Streamlit to new async infrastructure, confirm explicitly whether the UI should use the queue directly or stay on local service calls; do not assume frontend and API orchestration must match.

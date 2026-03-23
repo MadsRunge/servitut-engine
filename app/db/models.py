@@ -128,6 +128,18 @@ class ServitutTable(SQLModel, table=True):
     )
 
 
+class JobTable(SQLModel, table=True):
+    __tablename__ = "jobs"
+
+    id: str = Field(primary_key=True)
+    case_id: str = Field(index=True, foreign_key="cases.case_id")
+    task_type: str = Field(index=True)
+    status: str = Field(index=True)
+    result_data: Optional[Any] = Field(
+        default=None, sa_column=Column(JSON_VALUE, nullable=True)
+    )
+
+
 class ReportTable(SQLModel, table=True):
     __tablename__ = "reports"
 
