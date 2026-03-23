@@ -32,14 +32,14 @@ render_case_stats(case.case_id)
 with get_session_ctx() as session:
     servitutter = matrikel_service.filter_servitutter_for_target(
         storage_service.list_servitutter(session, case.case_id),
-        [case.target_matrikel] if case.target_matrikel else [],
+        [case.primary_parcel_number] if case.primary_parcel_number else [],
     )
 if not servitutter:
     render_empty_state("Ingen servitutter", "Kør ekstraktion, før review og sporbarhed giver mening.")
     st.stop()
 
 srv_options = {
-    f"{srv.title or srv.servitut_id} (conf={srv.confidence:.2f})": srv.servitut_id
+    f"{srv.title or srv.easement_id} (conf={srv.confidence:.2f})": srv.easement_id
     for srv in servitutter
 }
 selected_srv_label = st.selectbox("Vælg servitut", list(srv_options.keys()))
@@ -62,7 +62,7 @@ if srv.summary:
 # Nøglemålinger — første række
 m_col1, m_col2, m_col3 = st.columns(3)
 m_col1.metric("Dato / løbenummer", srv.date_reference or "—")
-target_label = "Ja" if srv.applies_to_target_matrikel is True else ("Nej" if srv.applies_to_target_matrikel is False else "Uafklaret")
+target_label = "Ja" if srv.applies_to_primary_parcel is True else ("Nej" if srv.applies_to_primary_parcel is False else "Uafklaret")
 m_col2.metric("Gælder målmatrikel", target_label)
 m_col3.metric("Confidence", f"{srv.confidence:.0%}")
 
@@ -83,15 +83,15 @@ MARKERING_BADGE = {
     "orange": "🟠 Orange — kræver stillingtagen",
     "sort": "⚫ Sort — ingen byggerelevans",
 }
-markering_text = MARKERING_BADGE.get(srv.byggeri_markering or "", "— Ikke vurderet")
+markering_text = MARKERING_BADGE.get(srv.construction_impact or "", "— Ikke vurderet")
 b_col1, b_col2 = st.columns(2)
 b_col1.markdown(f"**Byggemarkering**\n\n{markering_text}")
-if srv.applies_to_matrikler:
-    b_col2.markdown(f"**Gælder matrikler**\n\n{', '.join(srv.applies_to_matrikler)}")
+if srv.applies_to_parcel_numbers:
+    b_col2.markdown(f"**Gælder matrikler**\n\n{', '.join(srv.applies_to_parcel_numbers)}")
 if srv.scope_basis:
     st.caption(f"Scope-grundlag: {srv.scope_basis}")
 
-st.caption(f"ID: {srv.servitut_id} · Kilde: {srv.source_document}")
+st.caption(f"ID: {srv.easement_id} · Kilde: {srv.source_document}")
 
 render_section("Evidenskæde", "Hver evidensblok viser excerpt, fuld chunk, OCR-tekst og original side.")
 

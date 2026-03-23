@@ -108,7 +108,7 @@ def test_get_document_returns_404_for_foreign_case_document():
         headers=viewer_headers,
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 def test_get_report_returns_404_for_foreign_case_report():
@@ -127,4 +127,46 @@ def test_get_report_returns_404_for_foreign_case_report():
         headers=viewer_headers,
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("method", "path_template", "request_kwargs"),
+    [
+        (
+            "POST",
+            "/cases/{case_id}/documents",
+            {
+                "files": {
+                    "file": ("attest.pdf", b"%PDF-1.4 fake", "application/pdf"),
+                },
+            },
+        ),
+        ("GET", "/cases/{case_id}/documents", {}),
+        ("GET", "/cases/{case_id}/documents/doc-foreign", {}),
+        ("POST", "/cases/{case_id}/documents/doc-foreign/ocr", {}),
+        ("GET", "/cases/{case_id}/documents/doc-foreign/pages", {}),
+        ("GET", "/cases/{case_id}/documents/doc-foreign/chunks", {}),
+        ("POST", "/cases/{case_id}/extract", {}),
+        ("GET", "/cases/{case_id}/servitutter", {}),
+        ("POST", "/cases/{case_id}/reports", {}),
+        ("GET", "/cases/{case_id}/reports", {}),
+        ("GET", "/cases/{case_id}/reports/rep-foreign", {}),
+    ],
+)
+def test_case_scoped_routes_return_403_for_foreign_case(method, path_template, request_kwargs):
+    with get_session_ctx() as session:
+        owner = create_user(session, email="route-owner@example.com", password="secret123")
+        viewer = create_user(session, email="route-viewer@example.com", password="secret123")
+        case = create_case(session, "Fremmed sag", user_id=owner.id)
+        viewer_headers = {"Authorization": f"Bearer {build_access_token(viewer)}"}
+
+    response = client.request(
+        method,
+        path_template.format(case_id=case.case_id),
+        headers=viewer_headers,
+        **request_kwargs,
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Forbidden"}

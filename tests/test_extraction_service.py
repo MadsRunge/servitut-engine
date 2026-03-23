@@ -70,8 +70,8 @@ def test_extract_from_doc_chunks_uses_parallel_executor(monkeypatch):
     with patch(
         "app.services.extraction.llm_extractor._extract_document_servitutter",
         side_effect=[
-            [Servitut(servitut_id="srv-a", case_id="case-test", source_document="doc-a")],
-            [Servitut(servitut_id="srv-b", case_id="case-test", source_document="doc-b")],
+            [Servitut(easement_id="srv-a", case_id="case-test", source_document="doc-a")],
+            [Servitut(easement_id="srv-b", case_id="case-test", source_document="doc-b")],
         ],
     ) as mock_extract:
         result = extraction_service._extract_from_doc_chunks(doc_chunks, "case-test", "akt")
@@ -143,8 +143,8 @@ def test_extract_servitutter_preserves_input_document_order(monkeypatch):
     with patch(
         "app.services.extraction_service._extract_from_doc_chunks",
         return_value=[
-            Servitut(servitut_id="srv-1", case_id="case-test", source_document="doc-z"),
-            Servitut(servitut_id="srv-2", case_id="case-test", source_document="doc-a"),
+            Servitut(easement_id="srv-1", case_id="case-test", source_document="doc-z"),
+            Servitut(easement_id="srv-2", case_id="case-test", source_document="doc-a"),
         ],
     ):
         result = extraction_service.extract_servitutter(
@@ -203,14 +203,14 @@ def test_parse_llm_response_accepts_wrapped_json_object():
 
 
 def test_parse_llm_response_accepts_single_servitut_object():
-    response = '{"date_reference":"01.01.2000-1-1","akt_nr":"40 B 405","title":"Test"}'
+    response = '{"date_reference":"01.01.2000-1-1","archive_number":"40 B 405","title":"Test"}'
 
     parsed = llm_extractor._parse_llm_response(response)
 
     assert parsed == [
         {
             "date_reference": "01.01.2000-1-1",
-            "akt_nr": "40 B 405",
+            "archive_number": "40 B 405",
             "title": "Test",
         }
     ]
@@ -287,8 +287,8 @@ def test_extract_document_servitutter_parses_structured_scope_fields():
             '"title":"Test",'
             '"date_reference":"01.01.2000-1-1",'
             '"registered_at":"2000-01-01",'
-            '"applies_to_matrikler":["0001o"],'
-            '"raw_matrikel_references":["1o","1v"],'
+            '"applies_to_parcel_numbers":["0001o"],'
+            '"raw_parcel_references":["1o","1v"],'
             '"raw_scope_text":"Vedr. matr.nr. 1o og 1v",'
             '"scope_source":"akt",'
             '"scope_basis":"Eksplicit nævnt i akten",'
@@ -307,7 +307,7 @@ def test_extract_document_servitutter_parses_structured_scope_fields():
 
     assert len(result) == 1
     assert result[0].registered_at == date(2000, 1, 1)
-    assert result[0].raw_matrikel_references == ["1o", "1v"]
+    assert result[0].raw_parcel_references == ["1o", "1v"]
     assert result[0].raw_scope_text == "Vedr. matr.nr. 1o og 1v"
     assert result[0].scope_source == "akt"
 
@@ -360,20 +360,20 @@ def test_extract_canonical_from_attest_preloads_documents(monkeypatch):
     assert len(attest_by_doc["doc-attest"]) == 2
 
 
-def make_canonical(date_reference: str, akt_nr: str = None, title: str = "Test") -> Servitut:
+def make_canonical(date_reference: str, archive_number: str = None, title: str = "Test") -> Servitut:
     return Servitut(
-        servitut_id="srv-canonical",
+        easement_id="srv-canonical",
         case_id="case-test",
         source_document="doc-attest",
         date_reference=date_reference,
-        akt_nr=akt_nr,
+        archive_number=archive_number,
         title=title,
     )
 
 
 def test_select_candidate_chunks_scores_akt_nr():
-    """Chunk med akt_nr-match inkluderes."""
-    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    """Chunk med archive_number-match inkluderes."""
+    canonical = make_canonical("01.01.2000-1-1", archive_number="40 F 439")
     chunk_hit = make_chunk("doc-a", page=1, text="Se akt 40F439 vedr. byggelinje")
     chunk_miss = make_chunk("doc-a", page=2, text="Ingen relevante oplysninger her overhovedet")
 
@@ -387,7 +387,7 @@ def test_select_candidate_chunks_scores_akt_nr():
 
 def test_select_candidate_chunks_no_signal():
     """Ingen match → tom liste returneres."""
-    canonical = make_canonical("11.03.1974-1904-40", akt_nr="40 F 439")
+    canonical = make_canonical("11.03.1974-1904-40", archive_number="40 F 439")
     chunks = [
         make_chunk("doc-a", page=i, text="Helt irrelevant tekst om noget andet")
         for i in range(1, 4)
@@ -400,7 +400,7 @@ def test_select_candidate_chunks_no_signal():
 
 def test_select_candidate_chunks_context_window():
     """Naboer til en hit-chunk inkluderes i kontekstvinduet."""
-    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    canonical = make_canonical("01.01.2000-1-1", archive_number="40 F 439")
     chunks = [
         make_chunk("doc-a", page=1, text="Intet interessant her"),         # index 0 — nabo
         make_chunk("doc-a", page=2, text="Akt 40F439 omhandler vejret"),   # index 1 — hit
@@ -418,7 +418,7 @@ def test_select_candidate_chunks_context_window():
 
 def test_select_candidate_chunks_char_cap():
     """Tegnloftet på 16000 tegn respekteres."""
-    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439")
+    canonical = make_canonical("01.01.2000-1-1", archive_number="40 F 439")
     # Lav én hit-chunk efterfulgt af mange store chunks der tilsammen overstiger loftet
     big_text = "A" * 5000
     hit_chunk = make_chunk("doc-a", page=1, text="40F439 kort hit")
@@ -435,24 +435,24 @@ def test_select_candidate_chunks_char_cap():
 
 def test_enrich_canonical_preserves_attest_scope_over_akt_scope():
     canonical = Servitut(
-        servitut_id="srv-canonical",
+        easement_id="srv-canonical",
         case_id="case-test",
         source_document="doc-attest",
         date_reference="01.01.2000-1-1",
-        applies_to_matrikler=["0001o", "0001v"],
-        raw_matrikel_references=["1o", "1v"],
+        applies_to_parcel_numbers=["0001o", "0001v"],
+        raw_parcel_references=["1o", "1v"],
         raw_scope_text="Vedr. matr.nr. 1o og 1v",
         scope_source="attest",
         registered_at=date(2000, 1, 1),
         confidence=0.6,
     )
     akt = Servitut(
-        servitut_id="srv-akt",
+        easement_id="srv-akt",
         case_id="case-test",
         source_document="doc-akt",
         date_reference="01.01.2000-1-1",
-        applies_to_matrikler=["0022a"],
-        raw_matrikel_references=["22a"],
+        applies_to_parcel_numbers=["0022a"],
+        raw_parcel_references=["22a"],
         raw_scope_text="Vedr. matr.nr. 22a",
         scope_source="akt",
         summary="Detaljer fra akt",
@@ -462,22 +462,22 @@ def test_enrich_canonical_preserves_attest_scope_over_akt_scope():
     merged = _enrich_canonical(canonical, akt)
 
     assert merged.summary == "Detaljer fra akt"
-    assert merged.applies_to_matrikler == ["0001o", "0001v"]
-    assert merged.raw_matrikel_references == ["1o", "1v"]
+    assert merged.applies_to_parcel_numbers == ["0001o", "0001v"]
+    assert merged.raw_parcel_references == ["1o", "1v"]
     assert merged.raw_scope_text == "Vedr. matr.nr. 1o og 1v"
     assert merged.scope_source == "attest"
 
 
 def test_describe_chunk_scoring_inputs_exposes_attest_fields_and_signals():
     canonical = Servitut(
-        servitut_id="srv-canonical",
+        easement_id="srv-canonical",
         case_id="case-test",
         source_document="doc-attest",
         date_reference="11.03.1974-1904-40",
-        akt_nr="40 F 439",
+        archive_number="40 F 439",
         title="Afløbsledning ved byggelinje",
-        applies_to_matrikler=["38b"],
-        raw_matrikel_references=["38b", "1a"],
+        applies_to_parcel_numbers=["38b"],
+        raw_parcel_references=["38b", "1a"],
         raw_scope_text="Vedr. matr.nr. 38b",
     )
 
@@ -485,13 +485,13 @@ def test_describe_chunk_scoring_inputs_exposes_attest_fields_and_signals():
 
     row = described["canonical_rows"][0]
     assert row["raw_scope_text"] == "Vedr. matr.nr. 38b"
-    assert row["applies_to_matrikler"] == ["38b"]
+    assert row["applies_to_parcel_numbers"] == ["38b"]
     signal_types = {signal["signal_type"] for signal in row["derived_signals"]}
-    assert {"akt_nr", "date_ref", "lob_suffix", "matrikel", "title_word"} <= signal_types
+    assert {"archive_number", "date_ref", "lob_suffix", "matrikel", "title_word"} <= signal_types
 
 
 def test_score_akt_chunks_for_case_includes_scoreless_context_chunks(monkeypatch):
-    canonical = make_canonical("01.01.2000-1-1", akt_nr="40 F 439", title="Byggelinje")
+    canonical = make_canonical("01.01.2000-1-1", archive_number="40 F 439", title="Byggelinje")
     document = Document(
         document_id="doc-a",
         case_id="case-test",

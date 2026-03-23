@@ -5,8 +5,8 @@ Disse er *separate* fra Pydantic-DTO'erne i app/models/ som bruges som
 API response-typer. storage_service.py konverterer imellem de to lag.
 
 JSONB-kolonner anvendes til:
-  - Lister af komplekse objekter (evidence, pages, matrikler, servitutter i Report …)
-  - Lister af strenge (applies_to_matrikler, flags, downloaded_files …)
+  - Lister af komplekse objekter (evidence, pages, parcels, report entries …)
+  - Lister af strenge (applies_to_parcel_numbers, flags, downloaded_files …)
   - Midlertidigt data på Case (canonical_list, scoring_results)
 
 Chunks har sin egen tabel, fordi de forespørges selvstændigt pr. dokument/sag.
@@ -35,11 +35,11 @@ class CaseTable(SQLModel, table=True):
     address: Optional[str] = None
     external_ref: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    target_matrikel: Optional[str] = None
-    last_extracted_target_matrikel: Optional[str] = None
+    primary_parcel_number: Optional[str] = None
+    last_extracted_primary_parcel_number: Optional[str] = None
     status: str = Field(default="created")
     # JSONB: List[Matrikel] serialiseret som JSON-array
-    matrikler: Optional[Any] = Field(
+    parcels: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
     # JSONB: List[Servitut] — canonical liste fra tinglysningsattest (midlertidigt)
@@ -89,13 +89,13 @@ class ChunkTable(SQLModel, table=True):
 class ServitutTable(SQLModel, table=True):
     __tablename__ = "servitutter"
 
-    servitut_id: str = Field(primary_key=True)
+    easement_id: str = Field(primary_key=True)
     case_id: str = Field(index=True, foreign_key="cases.case_id")
     source_document: str
     priority: int = Field(default=0)
     date_reference: Optional[str] = None
     registered_at: Optional[date] = None
-    akt_nr: Optional[str] = None
+    archive_number: Optional[str] = None
     title: Optional[str] = None
     summary: Optional[str] = None
     beneficiary: Optional[str] = None
@@ -103,20 +103,20 @@ class ServitutTable(SQLModel, table=True):
     legal_type: Optional[str] = None
     relevance_for_property: Optional[str] = None
     construction_relevance: bool = Field(default=False)
-    byggeri_markering: Optional[str] = None
+    construction_impact: Optional[str] = None
     action_note: Optional[str] = None
-    applies_to_target_matrikel: Optional[bool] = None
+    applies_to_primary_parcel: Optional[bool] = None
     raw_scope_text: Optional[str] = None
     scope_source: Optional[str] = None
     scope_basis: Optional[str] = None
     scope_confidence: Optional[float] = None
     confidence: float = Field(default=0.0)
-    attest_confirmed: bool = Field(default=True)
+    confirmed_by_attest: bool = Field(default=True)
     # JSONB-lister
-    applies_to_matrikler: Optional[Any] = Field(
+    applies_to_parcel_numbers: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
-    raw_matrikel_references: Optional[Any] = Field(
+    raw_parcel_references: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
     # JSONB: List[Evidence]
@@ -142,14 +142,14 @@ class ReportTable(SQLModel, table=True):
         default=None, sa_column=Column(Text, nullable=True)
     )
     # JSONB-lister
-    target_matrikler: Optional[Any] = Field(
+    target_parcel_numbers: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
-    available_matrikler: Optional[Any] = Field(
+    available_parcel_numbers: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
     # JSONB: List[ReportEntry]
-    servitutter: Optional[Any] = Field(
+    entries: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)
     )
 

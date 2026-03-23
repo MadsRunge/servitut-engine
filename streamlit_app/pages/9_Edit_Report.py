@@ -58,7 +58,7 @@ report = _select_report(case.case_id)
 status_badge = "✏️ Manuelt redigeret" if report.manually_edited else "🤖 LLM-genereret"
 meta_parts = [
     f"`{report.report_id}`",
-    f"**{len(report.servitutter)} poster**",
+    f"**{len(report.entries)} poster**",
     status_badge,
     f"Oprettet {report.created_at:%Y-%m-%d %H:%M}",
 ]
@@ -87,10 +87,10 @@ edited_rows = st.data_editor(
     width="stretch",
     hide_index=True,
     num_rows="fixed",
-    disabled=["servitut_id"],
+    disabled=["easement_id"],
     height=580,
     column_config={
-        "nr": st.column_config.NumberColumn(
+        "sequence_number": st.column_config.NumberColumn(
             "Prioritet",
             min_value=1,
             step=1,
@@ -99,7 +99,7 @@ edited_rows = st.data_editor(
         ),
         "date_reference": st.column_config.TextColumn("Dato / løbenr.", width="small"),
         "title": st.column_config.TextColumn("Titel", width="medium"),
-        "byggeri_markering": st.column_config.SelectboxColumn(
+        "construction_impact": st.column_config.SelectboxColumn(
             "Byggeri",
             options=["", "rød", "orange", "sort"],
             width="small",
@@ -131,7 +131,7 @@ edited_rows = st.data_editor(
             "Amt-advarsel",
             help="Automatisk markeret hvis påtaleberettiget indeholder 'amt'. Fjern markeringen efter gennemgang.",
         ),
-        "servitut_id": st.column_config.TextColumn("Servitut-id", width="medium"),
+        "easement_id": st.column_config.TextColumn("Servitut-id", width="medium"),
     },
 )
 

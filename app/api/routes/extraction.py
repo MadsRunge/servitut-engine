@@ -19,9 +19,7 @@ def trigger_extraction(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case = case_service.verify_case_ownership(session, case_id, current_user.id)
 
     all_chunks = storage_service.load_all_chunks(
         session,
@@ -67,9 +65,7 @@ def list_servitutter(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     return storage_service.list_servitutter(
         session,
         case_id,

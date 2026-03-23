@@ -8,7 +8,7 @@ from app.db.database import get_session
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.models.user import User
-from app.services import storage_service
+from app.services import case_service, storage_service
 from app.services.ocr_service import run_document_pipeline
 
 router = APIRouter()
@@ -25,6 +25,7 @@ def run_ocr(
     Kør OCR-pipeline på et dokument:
     original.pdf → ocrmypdf → ocr.pdf → pdfplumber tekst → chunks
     """
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     doc = storage_service.load_document(
         session,
         case_id,
@@ -56,6 +57,7 @@ def get_pages(
     current_user: User = Depends(get_current_user),
 ):
     """Returner OCR-sider for et dokument."""
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     doc = storage_service.load_document(
         session,
         case_id,
@@ -79,6 +81,7 @@ def get_chunks(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     doc = storage_service.load_document(
         session,
         case_id,

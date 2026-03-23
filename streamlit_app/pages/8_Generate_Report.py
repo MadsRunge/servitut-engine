@@ -40,20 +40,20 @@ render_section(
     "Vælg én eller flere matrikler som udgør projektområdet. Redegørelsen vurderer alle servitutter mod de valgte matrikler.",
 )
 
-if not case.matrikler:
+if not case.parcels:
     st.warning("Ingen matrikler fundet på sagen. Kør OCR på tinglysningsattesten for at aktivere matrikelvalg.", icon="⚠️")
     st.stop()
 
 matrikel_labels = {
-    f"{m.matrikelnummer} · {m.landsejerlav or 'Ukendt landsejerlav'}": m.matrikelnummer
-    for m in case.matrikler
+    f"{m.parcel_number} · {m.cadastral_district or 'Ukendt landsejerlav'}": m.parcel_number
+    for m in case.parcels
 }
 all_options = list(matrikel_labels.keys())
 
-# Default: pre-select current target_matrikel if set, otherwise first
+# Default: pre-select current primary_parcel_number if set, otherwise first
 default_labels = (
-    [lbl for lbl, nr in matrikel_labels.items() if nr == case.target_matrikel]
-    if case.target_matrikel
+    [lbl for lbl, nr in matrikel_labels.items() if nr == case.primary_parcel_number]
+    if case.primary_parcel_number
     else [all_options[0]]
 )
 
@@ -92,12 +92,12 @@ with get_session_ctx() as session:
 servitutter = matrikel_service.filter_servitutter_for_target(
     raw_servitutter,
     selected_matrikler,
-    available_matrikler=[m.matrikelnummer for m in case.matrikler],
+    available_parcel_numbers=[m.parcel_number for m in case.parcels],
 )
 
-ja = sum(1 for s in servitutter if s.applies_to_target_matrikel is True)
-mske = sum(1 for s in servitutter if s.applies_to_target_matrikel is None)
-nej = sum(1 for s in servitutter if s.applies_to_target_matrikel is False)
+ja = sum(1 for s in servitutter if s.applies_to_primary_parcel is True)
+mske = sum(1 for s in servitutter if s.applies_to_primary_parcel is None)
+nej = sum(1 for s in servitutter if s.applies_to_primary_parcel is False)
 
 st.info(
     f"**{len(servitutter)} servitutter** for **{', '.join(selected_matrikler)}** — "
@@ -136,7 +136,7 @@ elif st.button("Generer redegørelse", type="primary"):
         all_chunks = storage_service.load_all_chunks(session, case.case_id)
 
     def _report_thread(srvs=servitutter, chunks=all_chunks, c_id=case.case_id,
-                       tm=selected_matrikler, am=[m.matrikelnummer for m in case.matrikler],
+                       tm=selected_matrikler, am=[m.parcel_number for m in case.parcels],
                        aod=as_of_date):
         try:
             with get_session_ctx() as session:
@@ -145,8 +145,8 @@ elif st.button("Generer redegørelse", type="primary"):
                     srvs,
                     chunks,
                     c_id,
-                    target_matrikler=tm,
-                    available_matrikler=am,
+                    target_parcel_numbers=tm,
+                    available_parcel_numbers=am,
                     as_of_date=aod,
                 )
             st.session_state[_RP_RESULT] = (r, None)
@@ -170,27 +170,27 @@ else:
 
     render_section("Seneste redegørelse", f"Rapport `{latest.report_id}` · {latest.created_at:%Y-%m-%d %H:%M}")
 
-    ja = sum(1 for e in latest.servitutter if (e.scope or "") == "Ja")
-    mske = sum(1 for e in latest.servitutter if (e.scope or "Måske") == "Måske")
-    nej = sum(1 for e in latest.servitutter if (e.scope or "") == "Nej")
+    ja = sum(1 for e in latest.entries if (e.scope or "") == "Ja")
+    mske = sum(1 for e in latest.entries if (e.scope or "Måske") == "Måske")
+    nej = sum(1 for e in latest.entries if (e.scope or "") == "Nej")
     render_stat_cards(
         [
-            ("Poster", str(len(latest.servitutter)), "Samlet antal rapportlinjer"),
+            ("Poster", str(len(latest.entries)), "Samlet antal rapportlinjer"),
             ("Ja", str(ja), "Gælder målmatriklen"),
             ("Måske", str(mske), "Uafklaret scope"),
             ("Nej", str(nej), "Gælder ikke målmatriklen"),
         ]
     )
-    if latest.target_matrikler:
+    if latest.target_parcel_numbers:
         st.caption(
-            f"Projektmatrikler: {', '.join(latest.target_matrikler)} · "
-            f"Ejendommens matrikler: {', '.join(latest.available_matrikler) or '—'}"
+            f"Projektmatrikler: {', '.join(latest.target_parcel_numbers)} · "
+            f"Ejendommens matrikler: {', '.join(latest.available_parcel_numbers) or '—'}"
         )
     if latest.notes:
         st.info(latest.notes)
 
     # Export
-    matrikel_slug = "-".join(latest.target_matrikler) if latest.target_matrikler else "ukendt"
+    matrikel_slug = "-".join(latest.target_parcel_numbers) if latest.target_parcel_numbers else "ukendt"
     date_slug = latest.created_at.strftime("%Y-%m-%d")
     case_slug = case.name.replace(" ", "_").replace("/", "-")[:40]
     base_name = f"servitutredegoerelse_{case_slug}_{matrikel_slug}_{date_slug}"
@@ -229,18 +229,18 @@ else:
     # Preview
     tab_cards, tab_table = st.tabs(["Kortvisning", "Redigeret tabel"])
     with tab_cards:
-        if latest.servitutter:
-            for entry in latest.servitutter:
+        if latest.entries:
+            for entry in latest.entries:
                 render_report_entry_card(entry)
         else:
             render_empty_state("Ingen rapportposter", "Rapporten indeholder ingen strukturerede linjer.")
     with tab_table:
         if latest.markdown_content:
             st.markdown(latest.markdown_content)
-        elif latest.servitutter:
-            for entry in latest.servitutter:
+        elif latest.entries:
+            for entry in latest.entries:
                 st.markdown(
-                    f"**{entry.nr}.** {entry.description or '—'} "
+                    f"**{entry.sequence_number}.** {entry.description or '—'} "
                     f"| {entry.legal_type or '—'} | {entry.action or '—'}"
                 )
         else:
@@ -251,12 +251,12 @@ else:
         render_section("Tidligere rapporter", "")
         for report in reports_sorted[1:]:
             with st.expander(f"Rapport `{report.report_id}` — {report.created_at:%Y-%m-%d %H:%M}"):
-                ja_old = sum(1 for e in report.servitutter if (e.scope or "") == "Ja")
-                mske_old = sum(1 for e in report.servitutter if (e.scope or "Måske") == "Måske")
-                nej_old = sum(1 for e in report.servitutter if (e.scope or "") == "Nej")
+                ja_old = sum(1 for e in report.entries if (e.scope or "") == "Ja")
+                mske_old = sum(1 for e in report.entries if (e.scope or "Måske") == "Måske")
+                nej_old = sum(1 for e in report.entries if (e.scope or "") == "Nej")
                 render_stat_cards(
                     [
-                        ("Poster", str(len(report.servitutter)), "Samlet antal rapportlinjer"),
+                        ("Poster", str(len(report.entries)), "Samlet antal rapportlinjer"),
                         ("Ja", str(ja_old), "Gælder målmatriklen"),
                         ("Måske", str(mske_old), "Uafklaret scope"),
                         ("Nej", str(nej_old), "Gælder ikke målmatriklen"),
@@ -264,7 +264,7 @@ else:
                 )
                 if report.notes:
                     st.info(report.notes)
-                matrikel_slug_old = "-".join(report.target_matrikler) if report.target_matrikler else "ukendt"
+                matrikel_slug_old = "-".join(report.target_parcel_numbers) if report.target_parcel_numbers else "ukendt"
                 date_slug_old = report.created_at.strftime("%Y-%m-%d")
                 base_name_old = f"servitutredegoerelse_{case_slug}_{matrikel_slug_old}_{date_slug_old}"
                 c1, c2, c3 = st.columns(3)

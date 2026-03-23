@@ -1,6 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from app.core.logging import get_logger
@@ -9,6 +10,16 @@ from app.services import matrikel_service, storage_service
 from app.utils.ids import generate_case_id
 
 logger = get_logger(__name__)
+
+
+def verify_case_ownership(session: Session, case_id: str, user_id: UUID) -> Case:
+    case = storage_service.load_case(session, case_id)
+    if case is None or case.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
+    return case
 
 
 def create_case(
@@ -106,10 +117,10 @@ def sync_case_matrikler(
 def update_target_matrikel(
     session: Session,
     case_id: str,
-    matrikelnummer: str,
+    parcel_number: str,
     owner_user_id: UUID | None = None,
 ) -> Optional[Case]:
     case = storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
     if case is None:
         return None
-    return matrikel_service.update_target_matrikel(session, case_id, matrikelnummer)
+    return matrikel_service.update_target_matrikel(session, case_id, parcel_number)

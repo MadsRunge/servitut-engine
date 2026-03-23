@@ -195,7 +195,7 @@ else:
     }
     TARGET_LABEL = {True: "✅ Ja", False: "❌ Nej", None: "❓ Uafklaret"}
 
-    unconfirmed = [s for s in servitutter if not s.attest_confirmed]
+    unconfirmed = [s for s in servitutter if not s.confirmed_by_attest]
     if unconfirmed:
         st.warning(
             f"**{len(unconfirmed)} servitut(ter) fundet i akter men ikke i tinglysningsattesten.** "
@@ -203,12 +203,12 @@ else:
             icon="⚠️",
         )
 
-    rød_n = sum(1 for s in servitutter if s.byggeri_markering == "rød")
-    orange_n = sum(1 for s in servitutter if s.byggeri_markering == "orange")
-    sort_n = sum(1 for s in servitutter if s.byggeri_markering == "sort")
-    ja_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is True)
-    nej_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is False)
-    uafklaret_n = sum(1 for s in servitutter if s.applies_to_target_matrikel is None)
+    rød_n = sum(1 for s in servitutter if s.construction_impact == "rød")
+    orange_n = sum(1 for s in servitutter if s.construction_impact == "orange")
+    sort_n = sum(1 for s in servitutter if s.construction_impact == "sort")
+    ja_n = sum(1 for s in servitutter if s.applies_to_primary_parcel is True)
+    nej_n = sum(1 for s in servitutter if s.applies_to_primary_parcel is False)
+    uafklaret_n = sum(1 for s in servitutter if s.applies_to_primary_parcel is None)
     render_stat_cards([
         ("🔴 Rød", str(rød_n), "Direkte byggerelevans"),
         ("🟠 Orange", str(orange_n), "Kræver stillingtagen"),
@@ -219,14 +219,14 @@ else:
     ])
 
     for srv in servitutter:
-        icon, badge_label = MARKERING_BADGE.get(srv.byggeri_markering or "", ("—", "Ikke vurderet"))
+        icon, badge_label = MARKERING_BADGE.get(srv.construction_impact or "", ("—", "Ikke vurderet"))
         title_text = srv.title or "Ukendt titel"
-        unconfirmed_prefix = "⚠️ " if not srv.attest_confirmed else ""
+        unconfirmed_prefix = "⚠️ " if not srv.confirmed_by_attest else ""
 
         with st.expander(f"{unconfirmed_prefix}{icon} {title_text}", expanded=False):
             col_a, col_b, col_c = st.columns([2, 1, 1])
             col_a.markdown(f"**Løbenummer / dato**\n\n{_md(srv.date_reference)}")
-            col_b.markdown(f"**Gælder målmatrikel**\n\n{TARGET_LABEL[srv.applies_to_target_matrikel]}")
+            col_b.markdown(f"**Gælder målmatrikel**\n\n{TARGET_LABEL[srv.applies_to_primary_parcel]}")
             col_c.markdown(f"**Byggemarkering**\n\n{icon} {_md(badge_label)}")
 
             st.divider()
@@ -243,8 +243,8 @@ else:
                 st.markdown(f"**Beskrivelse**\n\n{_md(srv.summary)}")
             if srv.scope_basis:
                 st.caption(f"Scope-grundlag: {_md(srv.scope_basis)}")
-            if srv.applies_to_matrikler:
-                st.caption(f"Gælder matrikler: {', '.join(srv.applies_to_matrikler)}")
+            if srv.applies_to_parcel_numbers:
+                st.caption(f"Gælder matrikler: {', '.join(srv.applies_to_parcel_numbers)}")
 
             if srv.evidence:
                 with st.expander("Vis kildetekst"):
@@ -256,5 +256,5 @@ else:
             st.caption(
                 f"Confidence: {srv.confidence:.0%} | "
                 f"Kilde: {doc_name.get(srv.source_document, srv.source_document)} | "
-                f"ID: {srv.servitut_id}"
+                f"ID: {srv.easement_id}"
             )

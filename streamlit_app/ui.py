@@ -586,30 +586,30 @@ def render_case_banner(case) -> None:
         chips.append(f'<span class="case-chip">{_escape_text(case.address)}</span>')
     if case.external_ref:
         chips.append(f'<span class="case-chip">Ref: {_escape_text(case.external_ref)}</span>')
-    if case.target_matrikel:
-        chips.append(f'<span class="case-chip">Målmatrikel: {_escape_text(case.target_matrikel)}</span>')
-    if case.matrikler:
-        chips.append(f'<span class="case-chip">{len(case.matrikler)} matrikler på ejendommen</span>')
+    if case.primary_parcel_number:
+        chips.append(f'<span class="case-chip">Målmatrikel: {_escape_text(case.primary_parcel_number)}</span>')
+    if case.parcels:
+        chips.append(f'<span class="case-chip">{len(case.parcels)} matrikler på ejendommen</span>')
     chips.append(f'<span class="case-chip">Status: {_escape_text(case.status)}</span>')
     st.markdown("".join(chips), unsafe_allow_html=True)
 
 
-def select_target_matrikel(case, key: str = "target_matrikel"):
+def select_target_matrikel(case, key: str = "primary_parcel_number"):
     with get_session_ctx() as session:
         case = matrikel_service.sync_case_matrikler(session, case.case_id) or case
 
-    if not case.matrikler:
+    if not case.parcels:
         st.info("Ingen matrikler fundet endnu. Kør OCR på tinglysningsattesten for at aktivere matrikelvalg.")
         return case
 
     labels = {
         (
-            f"{matrikel.matrikelnummer} · {matrikel.landsejerlav or 'Ukendt landsejerlav'}"
-            + (f" · {matrikel.areal_m2} m2" if matrikel.areal_m2 else "")
-        ): matrikel.matrikelnummer
-        for matrikel in case.matrikler
+            f"{matrikel.parcel_number} · {matrikel.cadastral_district or 'Ukendt landsejerlav'}"
+            + (f" · {matrikel.area_sqm} m2" if matrikel.area_sqm else "")
+        ): matrikel.parcel_number
+        for matrikel in case.parcels
     }
-    current_value = case.target_matrikel or case.matrikler[0].matrikelnummer
+    current_value = case.primary_parcel_number or case.parcels[0].parcel_number
     options = list(labels.keys())
     index = next((i for i, label in enumerate(options) if labels[label] == current_value), 0)
 
@@ -621,7 +621,7 @@ def select_target_matrikel(case, key: str = "target_matrikel"):
         help="Redegørelsen og scope-vurderingen køres for den valgte matrikel på ejendommen.",
     )
     selected_value = labels[selected_label]
-    if selected_value != case.target_matrikel:
+    if selected_value != case.primary_parcel_number:
         with get_session_ctx() as session:
             case = case_service.update_target_matrikel(session, case.case_id, selected_value) or case
     return case
@@ -666,7 +666,7 @@ def render_report_entry_card(entry: ReportEntry) -> None:
         <div class="report-card">
           <div class="report-card-head">
             <div style="display:flex; gap:0.85rem; align-items:flex-start;">
-              <div class="report-card-nr">{entry.nr}</div>
+              <div class="report-card-nr">{entry.sequence_number}</div>
               <div>
                 <div class="report-card-title">{_escape_text(entry.description or "Ingen beskrivelse")}</div>
                 <div class="mini-note">{_escape_text(entry.date_reference or "Dato/løbenummer mangler")}</div>

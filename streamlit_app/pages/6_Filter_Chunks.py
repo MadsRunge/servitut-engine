@@ -78,7 +78,7 @@ def _render_canonical_summary(scoring_inputs: dict) -> None:
 
     render_stat_cards([
         ("Servitutter", str(len(canonical_rows)), "Poster i tinglysningsattesten"),
-        ("Akt-signaler", str(next(group["count"] for group in signal_groups if group["signal_type"] == "akt_nr")), "Normaliserede aktnumre"),
+        ("Akt-signaler", str(next(group["count"] for group in signal_groups if group["signal_type"] == "archive_number")), "Normaliserede aktnumre"),
         ("Matrikel-signaler", str(next(group["count"] for group in signal_groups if group["signal_type"] == "matrikel")), "Scope fra attesten"),
         ("Titelord", str(next(group["count"] for group in signal_groups if group["signal_type"] == "title_word")), "Afledte nøgleord"),
     ])
@@ -115,9 +115,9 @@ def _render_canonical_summary(scoring_inputs: dict) -> None:
         {
             "Løbenummer / dato": row["date_reference"],
             "Titel": row["title"],
-            "Akt nr.": row["akt_nr"],
-            "Vedr.-matrikler": _join_or_dash(row["applies_to_matrikler"]),
-            "Rå matrikelhenvisninger": _join_or_dash(row["raw_matrikel_references"]),
+            "Akt nr.": row["archive_number"],
+            "Vedr.-matrikler": _join_or_dash(row["applies_to_parcel_numbers"]),
+            "Rå matrikelhenvisninger": _join_or_dash(row["raw_parcel_references"]),
             "Scope-tekst fra attest": row["raw_scope_text"],
             "Afledte signaler": _format_derived_signals(row["derived_signals"]),
         }
@@ -235,9 +235,9 @@ if canonical_key not in st.session_state:
     else:
         with get_session_ctx() as session:
             saved = storage_service.list_servitutter(session, case_id)
-        attest_confirmed = [servitut for servitut in saved if servitut.attest_confirmed]
-        if attest_confirmed:
-            st.session_state[canonical_key] = attest_confirmed
+        confirmed_by_attest = [servitut for servitut in saved if servitut.confirmed_by_attest]
+        if confirmed_by_attest:
+            st.session_state[canonical_key] = confirmed_by_attest
 
 canonical_list = st.session_state.get(canonical_key, [])
 has_canonical = bool(canonical_list)

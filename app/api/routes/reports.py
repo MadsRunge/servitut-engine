@@ -21,9 +21,7 @@ def create_report(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case = case_service.verify_case_ownership(session, case_id, current_user.id)
     case = case_service.sync_case_matrikler(
         session,
         case_id,
@@ -44,14 +42,14 @@ def create_report(
     )
 
     try:
-        target = [case.target_matrikel] if case.target_matrikel else []
+        target = [case.primary_parcel_number] if case.primary_parcel_number else []
         report = generate_report(
             session,
             servitutter,
             all_chunks,
             case_id,
-            target_matrikler=target,
-            available_matrikler=[matrikel.matrikelnummer for matrikel in case.matrikler],
+            target_parcel_numbers=target,
+            available_parcel_numbers=[matrikel.parcel_number for matrikel in case.parcels],
             as_of_date=as_of_date,
         )
     except Exception as e:
@@ -67,9 +65,7 @@ def list_reports(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     return storage_service.list_reports(
         session,
         case_id,
@@ -84,6 +80,7 @@ def get_report(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     report = storage_service.load_report(
         session,
         case_id,

@@ -79,15 +79,15 @@ def _case_to_row(case: Case) -> CaseTable:
         address=d.get("address"),
         external_ref=d.get("external_ref"),
         created_at=case.created_at,
-        target_matrikel=d.get("target_matrikel"),
-        last_extracted_target_matrikel=d.get("last_extracted_target_matrikel"),
+        primary_parcel_number=d.get("primary_parcel_number"),
+        last_extracted_primary_parcel_number=d.get("last_extracted_primary_parcel_number"),
         status=d.get("status", "created"),
-        matrikler=d.get("matrikler") or [],
+        parcels=d.get("parcels") or [],
     )
 
 
 def _row_to_case(row: CaseTable, document_ids: List[str]) -> Case:
-    matrikler = [Matrikel(**m) for m in (row.matrikler or [])]
+    parcels = [Matrikel(**m) for m in (row.parcels or [])]
     return Case(
         case_id=row.case_id,
         user_id=row.user_id,
@@ -95,10 +95,10 @@ def _row_to_case(row: CaseTable, document_ids: List[str]) -> Case:
         address=row.address,
         external_ref=row.external_ref,
         created_at=row.created_at,
-        target_matrikel=row.target_matrikel,
-        last_extracted_target_matrikel=row.last_extracted_target_matrikel,
+        primary_parcel_number=row.primary_parcel_number,
+        last_extracted_primary_parcel_number=row.last_extracted_primary_parcel_number,
         status=row.status,
-        matrikler=matrikler,
+        parcels=parcels,
         document_ids=document_ids,
     )
 
@@ -170,13 +170,13 @@ def _row_to_chunk(row: ChunkTable) -> Chunk:
 def _servitut_to_row(srv: Servitut) -> ServitutTable:
     d = srv.model_dump(mode="json")
     return ServitutTable(
-        servitut_id=d["servitut_id"],
+        easement_id=d["easement_id"],
         case_id=d["case_id"],
         source_document=d["source_document"],
         priority=d.get("priority", 0),
         date_reference=d.get("date_reference"),
         registered_at=srv.registered_at,
-        akt_nr=d.get("akt_nr"),
+        archive_number=d.get("archive_number"),
         title=d.get("title"),
         summary=d.get("summary"),
         beneficiary=d.get("beneficiary"),
@@ -184,17 +184,17 @@ def _servitut_to_row(srv: Servitut) -> ServitutTable:
         legal_type=d.get("legal_type"),
         relevance_for_property=d.get("relevance_for_property"),
         construction_relevance=d.get("construction_relevance", False),
-        byggeri_markering=d.get("byggeri_markering"),
+        construction_impact=d.get("construction_impact"),
         action_note=d.get("action_note"),
-        applies_to_target_matrikel=d.get("applies_to_target_matrikel"),
+        applies_to_primary_parcel=d.get("applies_to_primary_parcel"),
         raw_scope_text=d.get("raw_scope_text"),
         scope_source=d.get("scope_source"),
         scope_basis=d.get("scope_basis"),
         scope_confidence=d.get("scope_confidence"),
         confidence=d.get("confidence", 0.0),
-        attest_confirmed=d.get("attest_confirmed", True),
-        applies_to_matrikler=d.get("applies_to_matrikler") or [],
-        raw_matrikel_references=d.get("raw_matrikel_references") or [],
+        confirmed_by_attest=d.get("confirmed_by_attest", True),
+        applies_to_parcel_numbers=d.get("applies_to_parcel_numbers") or [],
+        raw_parcel_references=d.get("raw_parcel_references") or [],
         evidence=d.get("evidence") or [],
         flags=d.get("flags") or [],
     )
@@ -203,13 +203,13 @@ def _servitut_to_row(srv: Servitut) -> ServitutTable:
 def _row_to_servitut(row: ServitutTable) -> Servitut:
     evidence = [Evidence(**e) for e in (row.evidence or [])]
     return Servitut(
-        servitut_id=row.servitut_id,
+        easement_id=row.easement_id,
         case_id=row.case_id,
         source_document=row.source_document,
         priority=row.priority,
         date_reference=row.date_reference,
         registered_at=row.registered_at,
-        akt_nr=row.akt_nr,
+        archive_number=row.archive_number,
         title=row.title,
         summary=row.summary,
         beneficiary=row.beneficiary,
@@ -217,17 +217,17 @@ def _row_to_servitut(row: ServitutTable) -> Servitut:
         legal_type=row.legal_type,
         relevance_for_property=row.relevance_for_property,
         construction_relevance=row.construction_relevance,
-        byggeri_markering=row.byggeri_markering,
+        construction_impact=row.construction_impact,
         action_note=row.action_note,
-        applies_to_target_matrikel=row.applies_to_target_matrikel,
+        applies_to_primary_parcel=row.applies_to_primary_parcel,
         raw_scope_text=row.raw_scope_text,
         scope_source=row.scope_source,
         scope_basis=row.scope_basis,
         scope_confidence=row.scope_confidence,
         confidence=row.confidence,
-        attest_confirmed=row.attest_confirmed,
-        applies_to_matrikler=list(row.applies_to_matrikler or []),
-        raw_matrikel_references=list(row.raw_matrikel_references or []),
+        confirmed_by_attest=row.confirmed_by_attest,
+        applies_to_parcel_numbers=list(row.applies_to_parcel_numbers or []),
+        raw_parcel_references=list(row.raw_parcel_references or []),
         evidence=evidence,
         flags=list(row.flags or []),
     )
@@ -244,14 +244,14 @@ def _report_to_row(report: Report) -> ReportTable:
         as_of_date=report.as_of_date,
         notes=d.get("notes"),
         markdown_content=d.get("markdown_content"),
-        target_matrikler=d.get("target_matrikler") or [],
-        available_matrikler=d.get("available_matrikler") or [],
-        servitutter=d.get("servitutter") or [],
+        target_parcel_numbers=d.get("target_parcel_numbers") or [],
+        available_parcel_numbers=d.get("available_parcel_numbers") or [],
+        entries=d.get("entries") or [],
     )
 
 
 def _row_to_report(row: ReportTable) -> Report:
-    entries = [ReportEntry(**e) for e in (row.servitutter or [])]
+    entries = [ReportEntry(**e) for e in (row.entries or [])]
     return Report(
         report_id=row.report_id,
         case_id=row.case_id,
@@ -261,9 +261,9 @@ def _row_to_report(row: ReportTable) -> Report:
         as_of_date=row.as_of_date,
         notes=row.notes,
         markdown_content=row.markdown_content,
-        target_matrikler=list(row.target_matrikler or []),
-        available_matrikler=list(row.available_matrikler or []),
-        servitutter=entries,
+        target_parcel_numbers=list(row.target_parcel_numbers or []),
+        available_parcel_numbers=list(row.available_parcel_numbers or []),
+        entries=entries,
     )
 
 
@@ -550,14 +550,14 @@ def save_servitut(session: Session, servitut: Servitut) -> None:
 def load_servitut(
     session: Session,
     case_id: str,
-    servitut_id: str,
+    easement_id: str,
     owner_user_id: UUID | None = None,
 ) -> Optional[Servitut]:
     if owner_user_id is not None and _load_case_row(
         session, case_id, owner_user_id=owner_user_id
     ) is None:
         return None
-    row = session.get(ServitutTable, servitut_id)
+    row = session.get(ServitutTable, easement_id)
     if row is None or row.case_id != case_id:
         return None
     return _row_to_servitut(row)

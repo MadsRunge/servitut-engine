@@ -6,11 +6,11 @@ def _make_report() -> Report:
     return Report(
         report_id="rep-test1234",
         case_id="case-test",
-        target_matrikler=["0001o"],
-        available_matrikler=["0001o", "0001v"],
-        servitutter=[
+        target_parcel_numbers=["0001o"],
+        available_parcel_numbers=["0001o", "0001v"],
+        entries=[
             ReportEntry(
-                nr=1,
+                sequence_number=1,
                 date_reference="11.03.1974-1904-40",
                 raw_text="Original tekst",
                 description="Første servitut",
@@ -21,10 +21,10 @@ def _make_report() -> Report:
                 relevant_for_project=True,
                 scope="Ja",
                 scope_detail="Vedr. matr.nr. 0001o",
-                servitut_id="srv-1",
+                easement_id="srv-1",
             ),
             ReportEntry(
-                nr=2,
+                sequence_number=2,
                 date_reference="04.11.1966-5973-40",
                 description="Anden servitut",
                 beneficiary="Amtet",
@@ -33,7 +33,7 @@ def _make_report() -> Report:
                 action="Kræver vurdering",
                 relevant_for_project=False,
                 scope="Måske",
-                servitut_id="srv-2",
+                easement_id="srv-2",
             ),
         ],
         notes="Original note",
@@ -48,26 +48,26 @@ def test_report_to_editor_rows_includes_editable_fields():
     assert rows[0]["description"] == "Første servitut"
     assert rows[0]["raw_text"] == "Original tekst"
     assert rows[1]["scope"] == "Måske"
-    assert rows[1]["servitut_id"] == "srv-2"
+    assert rows[1]["easement_id"] == "srv-2"
 
 
 def test_amt_warning_survives_editor_roundtrip():
     """beneficiary_amt_warning=True should be preserved through report_to_editor_rows → update_report_from_editor."""
     report = _make_report()
-    report.servitutter[0].beneficiary_amt_warning = True
+    report.entries[0].beneficiary_amt_warning = True
 
     rows = report_to_editor_rows(report)
     assert rows[0]["beneficiary_amt_warning"] is True
 
     updated = update_report_from_editor(report.model_copy(deep=True), rows)
-    assert updated.servitutter[0].beneficiary_amt_warning is True
+    assert updated.entries[0].beneficiary_amt_warning is True
 
 
 def test_update_report_from_editor_sorts_and_rebuilds_markdown():
     report = _make_report()
     edited_rows = [
         {
-            "nr": 20,
+            "sequence_number": 20,
             "date_reference": "04.11.1966-5973-40",
             "raw_text": "",
             "description": "Flyttet ned",
@@ -78,10 +78,10 @@ def test_update_report_from_editor_sorts_and_rebuilds_markdown():
             "scope": "Nej",
             "scope_detail": "",
             "relevant_for_project": False,
-            "servitut_id": "srv-2",
+            "easement_id": "srv-2",
         },
         {
-            "nr": 1,
+            "sequence_number": 1,
             "date_reference": "11.03.1974-1904-40",
             "raw_text": "Ny tekst",
             "description": "Flyttet op",
@@ -92,7 +92,7 @@ def test_update_report_from_editor_sorts_and_rebuilds_markdown():
             "scope": "Ja",
             "scope_detail": "Vedr. matr.nr. 0001o og 0001v",
             "relevant_for_project": True,
-            "servitut_id": "srv-1",
+            "easement_id": "srv-1",
         },
     ]
 
@@ -101,11 +101,11 @@ def test_update_report_from_editor_sorts_and_rebuilds_markdown():
     assert updated.manually_edited is True
     assert updated.edited_at is not None
     assert updated.notes == "Redigeret note"
-    assert updated.servitutter[0].nr == 1
-    assert updated.servitutter[0].description == "Flyttet op"
-    assert updated.servitutter[1].nr == 2
-    assert updated.servitutter[1].description == "Flyttet ned"
-    assert updated.servitutter[1].raw_text is None
+    assert updated.entries[0].sequence_number == 1
+    assert updated.entries[0].description == "Flyttet op"
+    assert updated.entries[1].sequence_number == 2
+    assert updated.entries[1].description == "Flyttet ned"
+    assert updated.entries[1].raw_text is None
     assert updated.markdown_content is not None
     assert "Flyttet op" in updated.markdown_content
     assert "Flyttet ned" in updated.markdown_content

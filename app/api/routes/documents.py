@@ -22,9 +22,7 @@ async def upload_document(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     try:
         requested_type = validate_document_type(document_type)
     except ValueError as exc:
@@ -47,9 +45,7 @@ def list_documents(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     return storage_service.list_documents(
         session,
         case_id,
@@ -64,6 +60,7 @@ def get_document(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
+    case_service.verify_case_ownership(session, case_id, current_user.id)
     doc = storage_service.load_document(
         session,
         case_id,

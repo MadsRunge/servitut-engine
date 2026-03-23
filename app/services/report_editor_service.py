@@ -9,13 +9,13 @@ from app.services.report_render_service import build_markdown_table
 
 def report_to_editor_rows(report: Report) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for entry in report.servitutter:
+    for entry in report.entries:
         rows.append(
             {
-                "nr": entry.nr,
+                "sequence_number": entry.sequence_number,
                 "date_reference": entry.date_reference or "",
                 "title": entry.title or "",
-                "byggeri_markering": entry.byggeri_markering or "",
+                "construction_impact": entry.construction_impact or "",
                 "raw_text": entry.raw_text or "",
                 "description": entry.description or "",
                 "beneficiary": entry.beneficiary or "",
@@ -26,7 +26,7 @@ def report_to_editor_rows(report: Report) -> list[dict[str, Any]]:
                 "scope_detail": entry.scope_detail or "",
                 "relevant_for_project": entry.relevant_for_project,
                 "beneficiary_amt_warning": entry.beneficiary_amt_warning,
-                "servitut_id": entry.servitut_id,
+                "easement_id": entry.easement_id,
             }
         )
     return rows
@@ -39,7 +39,7 @@ def update_report_from_editor(report: Report, rows: Any, notes: str | None = Non
         row
         for _, row in sorted(
             indexed_rows,
-            key=lambda item: (_coerce_int(item[1].get("nr"), fallback=10_000), item[0]),
+            key=lambda item: (_coerce_int(item[1].get("sequence_number"), fallback=10_000), item[0]),
         )
     ]
 
@@ -47,10 +47,10 @@ def update_report_from_editor(report: Report, rows: Any, notes: str | None = Non
     for index, row in enumerate(sorted_rows, start=1):
         entries.append(
             ReportEntry(
-                nr=index,
+                sequence_number=index,
                 date_reference=_optional_str(row.get("date_reference")),
                 title=_optional_str(row.get("title")),
-                byggeri_markering=_optional_str(row.get("byggeri_markering")),
+                construction_impact=_optional_str(row.get("construction_impact")),
                 raw_text=_optional_str(row.get("raw_text")),
                 description=_optional_str(row.get("description")),
                 beneficiary=_optional_str(row.get("beneficiary")),
@@ -61,11 +61,11 @@ def update_report_from_editor(report: Report, rows: Any, notes: str | None = Non
                 beneficiary_amt_warning=bool(row.get("beneficiary_amt_warning", False)),
                 scope=_optional_str(row.get("scope")),
                 scope_detail=_optional_str(row.get("scope_detail")),
-                servitut_id=_required_servitut_id(row.get("servitut_id"), index),
+                easement_id=_required_servitut_id(row.get("easement_id"), index),
             )
         )
 
-    report.servitutter = entries
+    report.entries = entries
     report.notes = _optional_str(notes)
     report.markdown_content = build_markdown_table(entries) if entries else None
     report.edited_at = datetime.utcnow()

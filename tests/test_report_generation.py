@@ -30,7 +30,7 @@ def call_generate_report(servitutter, chunks, case_id="case-test", **kwargs):
 
 def make_mock_servitut(i: int) -> Servitut:
     return Servitut(
-        servitut_id=f"srv-test{i:04d}",
+        easement_id=f"srv-test{i:04d}",
         case_id="case-test",
         source_document="doc-test",
         title=f"Servitut {i}",
@@ -71,7 +71,7 @@ def make_mock_chunks() -> list:
 MOCK_API_RESPONSE = """{
   "entries": [
     {
-      "nr": 1,
+      "sequence_number": 1,
       "date_reference": "01.01.2000",
       "description": "En testservitut om vejret.",
       "beneficiary": "Kommunen",
@@ -79,7 +79,7 @@ MOCK_API_RESPONSE = """{
       "legal_type": "Offentligretlig",
       "action": "Ingen handling",
       "relevant_for_project": true,
-      "servitut_id": "srv-test0001"
+      "easement_id": "srv-test0001"
     }
   ],
   "notes": "Alt ser ud til at være i orden."
@@ -97,9 +97,9 @@ def test_report_fallback_on_api_error():
 
     assert isinstance(report, Report)
     assert report.case_id == "case-test"
-    assert len(report.servitutter) == 2
-    assert report.servitutter[0].description == "Resumé af servitut 1"
-    assert report.target_matrikler == []
+    assert len(report.entries) == 2
+    assert report.entries[0].description == "Resumé af servitut 1"
+    assert report.target_parcel_numbers == []
 
 
 def test_report_with_mock_api_response():
@@ -111,8 +111,8 @@ def test_report_with_mock_api_response():
         report = call_generate_report(servitutter, chunks, "case-test")
 
     assert isinstance(report, Report)
-    assert len(report.servitutter) == 1
-    assert report.servitutter[0].description == "En testservitut om vejret."
+    assert len(report.entries) == 1
+    assert report.entries[0].description == "En testservitut om vejret."
     assert report.notes == "Alt ser ud til at være i orden."
     assert report.markdown_content is not None
     assert "| Nr. | Dato/løbenummer |" in report.markdown_content
@@ -173,7 +173,7 @@ def test_report_accepts_json_wrapped_in_code_fence():
     with patch("app.services.report_service.generate_text", return_value=wrapped_response):
         report = call_generate_report(servitutter, chunks, "case-test")
 
-    assert len(report.servitutter) == 1
+    assert len(report.entries) == 1
     assert report.notes == "Alt ser ud til at være i orden."
 
 
@@ -181,18 +181,18 @@ def test_report_includes_all_servitutter_with_scope_annotation():
     """All servitutter appear in the report prompt — Ja/Nej/Måske set by LLM, not filtered."""
     included = make_mock_servitut(1)
     included.title = "Servitut for 0005ay"
-    included.applies_to_matrikler = ["0005ay"]
+    included.applies_to_parcel_numbers = ["0005ay"]
     other = make_mock_servitut(2)
     other.title = "Servitut for anden matrikel"
-    other.applies_to_matrikler = ["0518p"]
+    other.applies_to_parcel_numbers = ["0518p"]
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
         call_generate_report(
             [included, other],
             make_mock_chunks(),
             "case-test",
-            target_matrikler=["0005ay"],
-            available_matrikler=["0005ay", "0518p"],
+            target_parcel_numbers=["0005ay"],
+            available_parcel_numbers=["0005ay", "0518p"],
         )
 
     prompt = mock_generate_text.call_args[0][0]
@@ -225,7 +225,7 @@ def test_report_filters_future_servitutter_when_as_of_date_is_set():
 
 def test_report_entry_model():
     entry = ReportEntry(
-        nr=1,
+        sequence_number=1,
         date_reference="14.09.1903",
         description="Test beskrivelse",
         beneficiary="Kommunen",
@@ -233,9 +233,9 @@ def test_report_entry_model():
         legal_type="Offentligretlig",
         action="Ingen handling",
         relevant_for_project=True,
-        servitut_id="srv-test0001",
+        easement_id="srv-test0001",
     )
-    assert entry.nr == 1
+    assert entry.sequence_number == 1
     assert entry.relevant_for_project is True
 
 
@@ -255,9 +255,9 @@ def test_sort_oldest_first():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv1, srv2, srv3], make_mock_chunks(), "case-test")
 
-    assert report.servitutter[0].date_reference.startswith("03.02.1957")
-    assert report.servitutter[1].date_reference.startswith("22.11.1970")
-    assert report.servitutter[2].date_reference.startswith("15.06.1985")
+    assert report.entries[0].date_reference.startswith("03.02.1957")
+    assert report.entries[1].date_reference.startswith("22.11.1970")
+    assert report.entries[2].date_reference.startswith("15.06.1985")
 
 
 def test_dedup_removes_duplicate_date_reference():
@@ -271,7 +271,7 @@ def test_dedup_removes_duplicate_date_reference():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv1, srv2], make_mock_chunks(), "case-test")
 
-    assert len(report.servitutter) == 1
+    assert len(report.entries) == 1
 
 
 def test_empty_description_no_raw_text():
@@ -284,7 +284,7 @@ def test_empty_description_no_raw_text():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
-    assert report.servitutter[0].description == "Akt ikke gennemgået."
+    assert report.entries[0].description == "Akt ikke gennemgået."
 
 
 def test_empty_action_fallback():
@@ -296,7 +296,7 @@ def test_empty_action_fallback():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
-    assert report.servitutter[0].action == "Kræver opslag i tingbogsakt"
+    assert report.entries[0].action == "Kræver opslag i tingbogsakt"
 
 
 def test_amt_warning_set():
@@ -308,7 +308,7 @@ def test_amt_warning_set():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
-    assert report.servitutter[0].beneficiary_amt_warning is True
+    assert report.entries[0].beneficiary_amt_warning is True
 
 
 def test_amt_warning_not_set():
@@ -320,7 +320,7 @@ def test_amt_warning_not_set():
         mock_generate.side_effect = Exception("Force fallback")
         report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
-    assert report.servitutter[0].beneficiary_amt_warning is False
+    assert report.entries[0].beneficiary_amt_warning is False
 
 
 def test_report_model_serialization():
@@ -328,8 +328,8 @@ def test_report_model_serialization():
         report_id="rep-test1234",
         case_id="case-test",
         as_of_date=date(2022, 12, 20),
-        target_matrikler=["1o", "1v"],
-        servitutter=[],
+        target_parcel_numbers=["1o", "1v"],
+        entries=[],
         notes="En note",
         markdown_content="# Tabel\n...",
     )
@@ -337,8 +337,8 @@ def test_report_model_serialization():
     assert data["report_id"] == "rep-test1234"
     assert data["notes"] == "En note"
     assert data["as_of_date"] == date(2022, 12, 20)
-    assert data["target_matrikler"] == ["1o", "1v"]
+    assert data["target_parcel_numbers"] == ["1o", "1v"]
     report2 = Report(**data)
     assert report2.markdown_content == "# Tabel\n..."
     assert report2.as_of_date == date(2022, 12, 20)
-    assert report2.target_matrikler == ["1o", "1v"]
+    assert report2.target_parcel_numbers == ["1o", "1v"]

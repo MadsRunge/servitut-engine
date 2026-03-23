@@ -50,7 +50,7 @@ For hver servitut, returner et JSON-objekt med disse felter:
                      Eksempler: vejret til naboejendommen, ledningsret, fælles indkørsel, hegnsforpligtelse.
     Brug null hvis uklart.
 - construction_relevance: true hvis servitutten kan have betydning for fremtidigt byggeri eller ombygning, false ellers.
-- byggeri_markering: Klassificér servituttens betydning for fremtidigt byggeri efter dansk landinspektørpraksis:
+- construction_impact: Klassificér servituttens betydning for fremtidigt byggeri efter dansk landinspektørpraksis:
 
     "rød"    — Servitutten definerer direkte HVOR og I HVILKEN STØRRELSE der må bygges.
                Disse er direkte barrierer for placering af bebyggelse:
@@ -86,11 +86,11 @@ For hver servitut, returner et JSON-objekt med disse felter:
              "Passagekorridoren skal respekteres ved placering af bebyggelse",
              "Kontakt HOFOR om flytning af transformeranlæg",
              "Ingen handling nødvendig".
-- applies_to_matrikler: Liste over eksplicit nævnte matrikelnumre som servitutten gælder for. Returner kun numre der faktisk står i teksten. Gæt ikke.
-- raw_matrikel_references: Liste over ALLE rå matrikelhenvisninger du finder i teksten for denne servitut. Normaliser til lowercase.
+- applies_to_parcel_numbers: Liste over eksplicit nævnte matrikelnumre som servitutten gælder for. Returner kun numre der faktisk står i teksten. Gæt ikke.
+- raw_parcel_references: Liste over ALLE rå matrikelhenvisninger du finder i teksten for denne servitut. Normaliser til lowercase.
 - raw_scope_text: Kort citat eller tekstnær gengivelse af den del af teksten der begrunder scope. Brug null hvis intet eksplicit scope kan findes.
 - scope_source: Sæt altid denne til "akt".
-- scope_basis: Kort forklaring på hvorfor applies_to_matrikler er sat som den er.
+- scope_basis: Kort forklaring på hvorfor applies_to_parcel_numbers er sat som den er.
 - scope_confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på scope-vurderingen.
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket. 1.0 = meget sikker, 0.5 = usikker, 0.0 = gætteri.
 

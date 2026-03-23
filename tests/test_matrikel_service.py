@@ -33,11 +33,11 @@ def test_parse_matrikler_from_text_extracts_unique_entries():
     Areal: 20033 m2
     """
 
-    matrikler = matrikel_service.parse_matrikler_from_text(text)
+    parcels = matrikel_service.parse_matrikler_from_text(text)
 
-    assert [m.matrikelnummer for m in matrikler] == ["0005ay", "0518p"]
-    assert matrikler[0].landsejerlav == "Aalborg Markjorder"
-    assert matrikler[0].areal_m2 == 20033
+    assert [m.parcel_number for m in parcels] == ["0005ay", "0518p"]
+    assert parcels[0].cadastral_district == "Aalborg Markjorder"
+    assert parcels[0].area_sqm == 20033
 
 
 def test_sync_case_matrikler_sets_default_target(tmp_path, monkeypatch):
@@ -76,8 +76,8 @@ def test_sync_case_matrikler_sets_default_target(tmp_path, monkeypatch):
         updated = matrikel_service.sync_case_matrikler(session, "case-test")
 
     assert updated is not None
-    assert [m.matrikelnummer for m in updated.matrikler] == ["0005ay", "0518p"]
-    assert updated.target_matrikel == "0005ay"
+    assert [m.parcel_number for m in updated.parcels] == ["0005ay", "0518p"]
+    assert updated.primary_parcel_number == "0005ay"
 
 
 def test_resolve_target_matrikel_scope_is_deterministic():
@@ -87,7 +87,7 @@ def test_resolve_target_matrikel_scope_is_deterministic():
 
 
 def test_resolve_target_matrikel_scope_multi_matrikel():
-    # Matches when any target matrikel is in applies_to_matrikler
+    # Matches when any target matrikel is in applies_to_parcel_numbers
     assert matrikel_service.resolve_target_matrikel_scope(["1o"], ["1o", "1v"]) is True
     assert matrikel_service.resolve_target_matrikel_scope(["1v"], ["1o", "1v"]) is True
     assert matrikel_service.resolve_target_matrikel_scope(["38b"], ["1o", "1v"]) is False
@@ -100,7 +100,7 @@ def test_resolve_target_matrikel_scope_normalizes_zero_padded_values():
         matrikel_service.resolve_target_matrikel_scope(
             ["38b"],
             ["0001o", "0001v"],
-            available_matrikler=["0038b", "0001o", "0001v"],
+            available_parcel_numbers=["0038b", "0001o", "0001v"],
         )
         is False
     )
@@ -108,7 +108,7 @@ def test_resolve_target_matrikel_scope_normalizes_zero_padded_values():
         matrikel_service.resolve_target_matrikel_scope(
             ["22a"],
             ["0001o", "0001v"],
-            available_matrikler=["0022a", "0001o", "0001v"],
+            available_parcel_numbers=["0022a", "0001o", "0001v"],
         )
         is False
     )
@@ -126,16 +126,16 @@ def test_resolve_matching_target_matrikler_preserves_target_format():
 def test_filter_servitutter_for_target_accepts_single_target_string():
     servitutter = [
         Servitut(
-            servitut_id="srv-1",
+            easement_id="srv-1",
             case_id="case-test",
             source_document="doc-1",
-            applies_to_matrikler=["0005ay"],
+            applies_to_parcel_numbers=["0005ay"],
         )
     ]
     filtered = matrikel_service.filter_servitutter_for_target(servitutter, "0005ay")
 
     assert len(filtered) == 1
-    assert filtered[0].applies_to_target_matrikel is True
+    assert filtered[0].applies_to_primary_parcel is True
 
 
 def test_update_target_matrikel_accepts_unpadded_match(tmp_path, monkeypatch):
@@ -143,9 +143,9 @@ def test_update_target_matrikel_accepts_unpadded_match(tmp_path, monkeypatch):
         case = Case(
             case_id="case-test",
             name="Test sag",
-            matrikler=[
-                {"matrikelnummer": "0001o", "landsejerlav": "Test By"},
-                {"matrikelnummer": "0001v", "landsejerlav": "Test By"},
+            parcels=[
+                {"parcel_number": "0001o", "cadastral_district": "Test By"},
+                {"parcel_number": "0001v", "cadastral_district": "Test By"},
             ],
         )
         storage_service.save_case(session, case)
@@ -153,7 +153,7 @@ def test_update_target_matrikel_accepts_unpadded_match(tmp_path, monkeypatch):
         updated = matrikel_service.update_target_matrikel(session, "case-test", "1o")
 
     assert updated is not None
-    assert updated.target_matrikel == "0001o"
+    assert updated.primary_parcel_number == "0001o"
 
 
 def test_list_documents_is_metadata_only_by_default(tmp_path, monkeypatch):

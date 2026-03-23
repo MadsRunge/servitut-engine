@@ -6,9 +6,9 @@ from sqlmodel import Field, SQLModel
 
 
 class Matrikel(SQLModel):
-    matrikelnummer: str
-    landsejerlav: Optional[str] = None
-    areal_m2: Optional[int] = None
+    parcel_number: str
+    cadastral_district: Optional[str] = None
+    area_sqm: Optional[int] = None
 
 
 class Case(SQLModel):
@@ -19,7 +19,7 @@ class Case(SQLModel):
     external_ref: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     document_ids: List[str] = Field(default_factory=list)
-    matrikler: List[Matrikel] = Field(default_factory=list)
-    target_matrikel: Optional[str] = None
-    last_extracted_target_matrikel: Optional[str] = None
+    parcels: List[Matrikel] = Field(default_factory=list)
+    primary_parcel_number: Optional[str] = None
+    last_extracted_primary_parcel_number: Optional[str] = None
     status: str = "created"  # created | parsing | extracting | done | error

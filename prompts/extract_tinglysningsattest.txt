@@ -11,24 +11,24 @@ FULDSTÆNDIGHED:
 - Det er bedre at inkludere en usikker post (confidence 0.5) end at udelade den.
 
 VIGTIGT:
-- Udtræk KUN date_reference, registered_at, akt_nr, title, applies_to_matrikler, raw_matrikel_references, raw_scope_text, scope_source og confidence
+- Udtræk KUN date_reference, registered_at, archive_number, title, applies_to_parcel_numbers, raw_parcel_references, raw_scope_text, scope_source og confidence
 - Løbenummeret (fx "09.02.1957-490-40") er kritisk — kopiér det præcist som det står
-- akt_nr er aktens identifikator/volumenummer (fx "40 B 405", "23 M 20", "B-405") — kopiér præcist som det fremgår
+- archive_number er aktens identifikator/volumenummer (fx "40 B 405", "23 M 20", "B-405") — kopiér præcist som det fremgår
 - Titlen skal være kort og præcis baseret på beskrivelsen i attesten
-- Returner ikke summary, beneficiary, disposition_type, legal_type, construction_relevance, byggeri_markering eller action_note. De udfyldes senere fra akterne.
+- Returner ikke summary, beneficiary, disposition_type, legal_type, construction_relevance, construction_impact eller action_note. De udfyldes senere fra akterne.
 
 For hver servitut, returner et JSON-objekt med disse felter:
 - date_reference: Dato og løbenummer præcist som angivet (fx "09.02.1957-490-40"). Brug null hvis ukendt.
 - registered_at: Tinglysningsdato som ISO-dato `YYYY-MM-DD`, hvis den fremgår sikkert af date_reference eller teksten. Brug null hvis ukendt.
-- akt_nr: Aktens identifikator/nummer præcist som angivet (fx "40 B 405", "40B405"). Brug null hvis ikke angivet.
+- archive_number: Aktens identifikator/nummer præcist som angivet (fx "40 B 405", "40B405"). Brug null hvis ikke angivet.
 - title: Kort, præcis titel (fx "Vejbyggelinje fra Billeshavevej", "Afløbsledning", "Vandstandsregulering").
-- applies_to_matrikler: Liste over matrikelnumre fra attesten som servitutten gælder for.
+- applies_to_parcel_numbers: Liste over matrikelnumre fra attesten som servitutten gælder for.
     I attesten vises dette typisk som "Vedr 38B", "Vedr 1M", "Vedr 1A" i tillægsteksten.
     Udtræk PRÆCIST det matrikelnummer der er nævnt (fx ["38b"], ["1m"], ["1a"]).
     Returner nummeret præcist som det står i attesten — selv hvis det er et gammelt/historisk nummer der ikke matcher ejendommens nuværende matrikler. Det er bedre at bevare det originale nummer end at gætte på en nutidig ækvivalent.
     Hvis ingen "Vedr"-annotation findes for denne servitut, returner en tom liste [].
     Normaliser til lowercase (fx "38B" → "38b").
-- raw_matrikel_references: Liste over ALLE rå matrikelhenvisninger du kan se i scope-teksten for servitutten. Bevar de originale numre som de står skrevet, normaliseret til lowercase.
+- raw_parcel_references: Liste over ALLE rå matrikelhenvisninger du kan se i scope-teksten for servitutten. Bevar de originale numre som de står skrevet, normaliseret til lowercase.
 - raw_scope_text: Kort citat eller præcis tekstnær gengivelse af den del af attesten, der begrunder scope (fx "Vedr. matr.nr. 38b" eller "Vedr. matr.nr. 1o og 1v"). Brug null hvis der ikke findes nogen eksplicit scope-tekst.
 - scope_source: Sæt altid denne til "attest".
 - confidence: 1.0 for klart listede servitutter med løbenummer, lavere hvis usikker.

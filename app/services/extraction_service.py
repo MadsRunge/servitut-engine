@@ -114,7 +114,7 @@ def extract_servitutter(
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
     case = matrikel_service.sync_case_matrikler(session, case_id, attest_by_doc.keys())
-    all_matrikler = [matrikel.matrikelnummer for matrikel in case.matrikler] if case else []
+    all_matrikler = [matrikel.parcel_number for matrikel in case.parcels] if case else []
 
     if not akt_chunks:
         return canonical_list

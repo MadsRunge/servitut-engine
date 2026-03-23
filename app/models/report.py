@@ -5,7 +5,7 @@ from sqlmodel import Field, SQLModel
 
 
 class ReportEntry(SQLModel):
-    nr: int
+    sequence_number: int
     date_reference: Optional[str] = None
     raw_text: Optional[str] = None  # Verbatim tekst fra akten
     description: Optional[str] = None
@@ -14,12 +14,12 @@ class ReportEntry(SQLModel):
     legal_type: Optional[str] = None
     action: Optional[str] = None
     title: Optional[str] = None
-    byggeri_markering: Optional[str] = None  # sort | orange | rød
+    construction_impact: Optional[str] = None  # sort | orange | rød
     relevant_for_project: bool = False
     beneficiary_amt_warning: bool = False
     scope: Optional[str] = None  # "Ja" | "Nej" | "Måske"
     scope_detail: Optional[str] = None  # fx "Vedr. matr.nr. 1o og 1v"
-    servitut_id: str
+    easement_id: str
 
 
 class Report(SQLModel):
@@ -29,8 +29,8 @@ class Report(SQLModel):
     edited_at: Optional[datetime] = None
     manually_edited: bool = False
     as_of_date: Optional[date] = None
-    target_matrikler: List[str] = Field(default_factory=list)
-    available_matrikler: List[str] = Field(default_factory=list)
-    servitutter: List[ReportEntry] = Field(default_factory=list)
+    target_parcel_numbers: List[str] = Field(default_factory=list)
+    available_parcel_numbers: List[str] = Field(default_factory=list)
+    entries: List[ReportEntry] = Field(default_factory=list)
     notes: Optional[str] = None
     markdown_content: Optional[str] = None

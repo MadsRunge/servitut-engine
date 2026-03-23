@@ -43,7 +43,7 @@ def test_parse_mock_llm_response():
 
 def test_servitut_model_validates_correctly():
     srv = Servitut(
-        servitut_id="srv-abc12345",
+        easement_id="srv-abc12345",
         case_id="case-xyz",
         source_document="doc-abc",
         date_reference="14.09.1903",
@@ -55,14 +55,14 @@ def test_servitut_model_validates_correctly():
         legal_type="offentlig",
         construction_relevance=True,
         action_note="Ingen handling",
-        raw_matrikel_references=["1o", "1v"],
+        raw_parcel_references=["1o", "1v"],
         raw_scope_text="Vedr. matr.nr. 1o og 1v",
         scope_source="attest",
         confidence=0.9,
         evidence=[],
         flags=[],
     )
-    assert srv.servitut_id == "srv-abc12345"
+    assert srv.easement_id == "srv-abc12345"
     assert srv.construction_relevance is True
     assert srv.confidence == 0.9
     assert srv.registered_at == date(1903, 9, 14)
@@ -71,7 +71,7 @@ def test_servitut_model_validates_correctly():
 
 def test_servitut_model_defaults():
     srv = Servitut(
-        servitut_id="srv-min",
+        easement_id="srv-min",
         case_id="case-min",
         source_document="doc-min",
     )
@@ -79,7 +79,7 @@ def test_servitut_model_defaults():
     assert srv.construction_relevance is False
     assert srv.evidence == []
     assert srv.flags == []
-    assert srv.raw_matrikel_references == []
+    assert srv.raw_parcel_references == []
     assert srv.registered_at is None
 
 
@@ -111,7 +111,7 @@ def test_chunk_model():
 
 def test_servitut_serialization():
     srv = Servitut(
-        servitut_id="srv-test",
+        easement_id="srv-test",
         case_id="case-test",
         source_document="doc-test",
         title="Test",
@@ -120,7 +120,7 @@ def test_servitut_serialization():
         confidence=0.75,
     )
     data = srv.model_dump()
-    assert data["servitut_id"] == "srv-test"
+    assert data["easement_id"] == "srv-test"
     assert data["confidence"] == 0.75
     assert data["registered_at"] == date(2022, 12, 20)
     # Round-trip

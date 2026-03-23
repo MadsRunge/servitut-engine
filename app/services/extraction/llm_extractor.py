@@ -64,7 +64,7 @@ def _coerce_payload_to_list(payload: object) -> list:
             value = payload.get(key)
             if isinstance(value, list):
                 return value
-        if payload.get("date_reference") or payload.get("title") or payload.get("akt_nr"):
+        if payload.get("date_reference") or payload.get("title") or payload.get("archive_number"):
             return [payload]
     return []
 
@@ -207,24 +207,24 @@ def _extract_document_servitutter(
         date_reference = coerce_optional_str(item.get("date_reference"))
         scope_source = coerce_optional_str(item.get("scope_source")) or source_type
         servitut = Servitut(
-            servitut_id=generate_servitut_id(),
+            easement_id=generate_servitut_id(),
             case_id=case_id,
             source_document=doc_id,
             priority=i,
             date_reference=date_reference,
             registered_at=parse_registered_at(item.get("registered_at"), date_reference),
-            akt_nr=coerce_optional_str(item.get("akt_nr")),
+            archive_number=coerce_optional_str(item.get("archive_number")),
             title=coerce_optional_str(item.get("title")),
             summary=coerce_optional_str(item.get("summary")),
             beneficiary=coerce_optional_str(item.get("beneficiary")),
             disposition_type=coerce_optional_str(item.get("disposition_type")),
             legal_type=coerce_optional_str(item.get("legal_type")),
             construction_relevance=item.get("construction_relevance", False) or False,
-            byggeri_markering=coerce_optional_str(item.get("byggeri_markering")),
+            construction_impact=coerce_optional_str(item.get("construction_impact")),
             action_note=coerce_optional_str(item.get("action_note")),
-            applies_to_matrikler=coerce_str_list(item.get("applies_to_matrikler")),
-            raw_matrikel_references=coerce_str_list(item.get("raw_matrikel_references"))
-            or coerce_str_list(item.get("applies_to_matrikler")),
+            applies_to_parcel_numbers=coerce_str_list(item.get("applies_to_parcel_numbers")),
+            raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
+            or coerce_str_list(item.get("applies_to_parcel_numbers")),
             raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
             or coerce_optional_str(item.get("scope_basis")),
             scope_source=scope_source,

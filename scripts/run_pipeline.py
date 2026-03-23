@@ -80,7 +80,7 @@ def main():
     print("\n[4/4] Rapport-generering via LLM...")
     report = generate_report(servitutter, chunks, case_id)
     print(f"     Report ID: {report.report_id}")
-    print(f"     Entries  : {len(report.servitutter)}")
+    print(f"     Entries  : {len(report.entries)}")
 
     # --- OUTPUT ---
     hr()
@@ -95,8 +95,8 @@ def main():
 
     hr("-")
     print("\nSTRUKTUREREDE ENTRIES:")
-    for entry in report.servitutter:
-        print(f"\n  Nr. {entry.nr}: {entry.description or '—'}")
+    for entry in report.entries:
+        print(f"\n  Nr. {entry.sequence_number}: {entry.description or '—'}")
         print(f"    Dato/ref     : {entry.date_reference or '—'}")
         print(f"    Påtaleberettig: {entry.beneficiary or '—'}")
         print(f"    Disposition  : {entry.disposition or '—'}")

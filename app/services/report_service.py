@@ -91,10 +91,10 @@ def _build_report_entries(
         scope_val = entry_data.get("scope")
         entries.append(
             ReportEntry(
-                nr=i,
+                sequence_number=i,
                 date_reference=entry_data.get("date_reference"),
                 title=entry_data.get("title"),
-                byggeri_markering=entry_data.get("byggeri_markering"),
+                construction_impact=entry_data.get("construction_impact"),
                 description=entry_data.get("description"),
                 beneficiary=entry_data.get("beneficiary"),
                 disposition=entry_data.get("disposition"),
@@ -106,7 +106,7 @@ def _build_report_entries(
                 ),
                 scope=scope_val,
                 scope_detail=entry_data.get("scope_detail"),
-                servitut_id=entry_data.get("servitut_id", ""),
+                easement_id=entry_data.get("easement_id", ""),
             )
         )
     return entries
@@ -134,11 +134,11 @@ def _dedup_servitutter(servitutter: List[Servitut]) -> List[Servitut]:
             unique.append(srv)
             continue
         if srv.date_reference not in seen:
-            seen[srv.date_reference] = srv.servitut_id
+            seen[srv.date_reference] = srv.easement_id
             unique.append(srv)
         else:
             logger.warning(
-                f"Dedup: fjerner dublet {srv.servitut_id!r} "
+                f"Dedup: fjerner dublet {srv.easement_id!r} "
                 f"(date_reference={srv.date_reference!r}, beholder={seen[srv.date_reference]!r})"
             )
     return unique
@@ -165,28 +165,28 @@ def generate_report(
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
     case_id: str,
-    target_matrikler: Optional[List[str]] = None,
-    available_matrikler: Optional[List[str]] = None,
+    target_parcel_numbers: Optional[List[str]] = None,
+    available_parcel_numbers: Optional[List[str]] = None,
     as_of_date: Optional[date] = None,
 ) -> Report:
     """Generate a structured report from extracted servitutter."""
     report_id = generate_report_id()
     prompt_template = _load_prompt()
-    target_matrikler = target_matrikler or []
-    available_matrikler = available_matrikler or []
+    target_parcel_numbers = target_parcel_numbers or []
+    available_parcel_numbers = available_parcel_numbers or []
     dated_servitutter = _filter_servitutter_by_as_of_date(servitutter, as_of_date)
     filtered_servitutter = filter_servitutter_for_target(
         dated_servitutter,
-        target_matrikler,
-        available_matrikler,
+        target_parcel_numbers,
+        available_parcel_numbers,
     )
     filtered_servitutter = _dedup_servitutter(filtered_servitutter)
     filtered_servitutter = sorted(filtered_servitutter, key=lambda s: _parse_date_reference(s.date_reference))
 
     _REPORT_FIELDS = {
-        "servitut_id", "date_reference", "title", "summary", "beneficiary",
-        "disposition_type", "legal_type", "action_note", "byggeri_markering",
-        "applies_to_target_matrikel", "applies_to_matrikler", "registered_at",
+        "easement_id", "date_reference", "title", "summary", "beneficiary",
+        "disposition_type", "legal_type", "action_note", "construction_impact",
+        "applies_to_primary_parcel", "applies_to_parcel_numbers", "registered_at",
     }
     servitutter_json = json.dumps(
         [
@@ -200,12 +200,12 @@ def generate_report(
     prompt = prompt_template.replace("{servitutter_json}", servitutter_json)
     prompt = prompt.replace("{evidence_text}", "")
     prompt = prompt.replace(
-        "{target_matrikler_json}",
-        json.dumps(target_matrikler, ensure_ascii=False),
+        "{target_parcel_numbers_json}",
+        json.dumps(target_parcel_numbers, ensure_ascii=False),
     )
     prompt = prompt.replace(
-        "{all_matrikler_json}",
-        json.dumps(available_matrikler, ensure_ascii=False),
+        "{available_parcel_numbers_json}",
+        json.dumps(available_parcel_numbers, ensure_ascii=False),
     )
     prompt = prompt.replace(
         "{as_of_date}",
@@ -219,11 +219,11 @@ def generate_report(
     }
 
     # Build lookup dicts for enrichment (used in both LLM and fallback paths)
-    srv_by_id = {s.servitut_id: s for s in filtered_servitutter}
+    srv_by_id = {s.easement_id: s for s in filtered_servitutter}
     srv_by_date = {s.date_reference: s for s in filtered_servitutter}
 
-    def _lookup_srv(servitut_id: str, date_reference: Optional[str]) -> Optional[Servitut]:
-        return srv_by_id.get(servitut_id) or srv_by_date.get(date_reference)
+    def _lookup_srv(easement_id: str, date_reference: Optional[str]) -> Optional[Servitut]:
+        return srv_by_id.get(easement_id) or srv_by_date.get(date_reference)
 
     def _akt_raw_text(srv: Servitut) -> Optional[str]:
         akt_ev = [ev for ev in (srv.evidence or []) if ev.document_id not in attest_doc_ids]
@@ -245,7 +245,7 @@ def generate_report(
         raw_entries = _build_report_entries(data.get("entries", []))
         entries = []
         for entry in raw_entries:
-            srv = _lookup_srv(entry.servitut_id, entry.date_reference)
+            srv = _lookup_srv(entry.easement_id, entry.date_reference)
             updates = {}
             if srv:
                 if not entry.description or entry.description.strip() in ("—", "-", ""):
@@ -261,33 +261,33 @@ def generate_report(
         # Fallback: build basic entries from servitutter
         for i, srv in enumerate(filtered_servitutter, 1):
             scope = (
-                "Ja" if srv.applies_to_target_matrikel is True
-                else "Nej" if srv.applies_to_target_matrikel is False
+                "Ja" if srv.applies_to_primary_parcel is True
+                else "Nej" if srv.applies_to_primary_parcel is False
                 else "Måske"
             )
-            matching = resolve_matching_target_matrikler(srv.applies_to_matrikler, target_matrikler)
+            matching = resolve_matching_target_matrikler(srv.applies_to_parcel_numbers, target_parcel_numbers)
             scope_detail = f"Vedr. matr.nr. {' og '.join(matching)}" if matching else None
             entries.append(_apply_empty_field_fallbacks(
                 ReportEntry(
-                    nr=i,
+                    sequence_number=i,
                     date_reference=srv.date_reference,
                     title=srv.title,
-                    byggeri_markering=srv.byggeri_markering,
+                    construction_impact=srv.construction_impact,
                     raw_text=_akt_raw_text(srv),
                     description=srv.summary,
                     beneficiary=srv.beneficiary,
                     disposition=srv.disposition_type,
                     legal_type=srv.legal_type,
                     action=srv.action_note,
-                    relevant_for_project=srv.applies_to_target_matrikel is True,
+                    relevant_for_project=srv.applies_to_primary_parcel is True,
                     scope=scope,
                     scope_detail=scope_detail,
-                    servitut_id=srv.servitut_id,
+                    easement_id=srv.easement_id,
                 )
             ))
 
     entries = sorted(entries, key=lambda e: _parse_date_reference(e.date_reference))
-    entries = [e.model_copy(update={"nr": i}) for i, e in enumerate(entries, 1)]
+    entries = [e.model_copy(update={"sequence_number": i}) for i, e in enumerate(entries, 1)]
 
     markdown_content = build_markdown_table(entries) if entries else None
 
@@ -295,9 +295,9 @@ def generate_report(
         report_id=report_id,
         case_id=case_id,
         as_of_date=as_of_date,
-        target_matrikler=target_matrikler,
-        available_matrikler=available_matrikler,
-        servitutter=entries,
+        target_parcel_numbers=target_parcel_numbers,
+        available_parcel_numbers=available_parcel_numbers,
+        entries=entries,
         notes=notes,
         markdown_content=markdown_content,
     )

@@ -21,10 +21,10 @@ def build_markdown_table(entries: list[ReportEntry]) -> str:
         " | ".join(
             [
                 "|",
-                escape_markdown_cell(entry.nr),
+                escape_markdown_cell(entry.sequence_number),
                 escape_markdown_cell(entry.date_reference),
                 escape_markdown_cell(entry.title),
-                escape_markdown_cell(entry.byggeri_markering),
+                escape_markdown_cell(entry.construction_impact),
                 escape_markdown_cell(entry.description),
                 escape_markdown_cell(entry.beneficiary),
                 escape_markdown_cell(entry.disposition),
@@ -41,11 +41,11 @@ def build_markdown_table(entries: list[ReportEntry]) -> str:
 
 def build_markdown_report(report: Report) -> str:
     parts = [f"# Rapport {report.report_id}", ""]
-    if report.target_matrikler:
+    if report.target_parcel_numbers:
         parts.extend(
             [
-                f"**Projektmatrikler:** {', '.join(report.target_matrikler)}",
-                f"**Ejendommens matrikler:** {', '.join(report.available_matrikler) or 'Ikke angivet'}",
+                f"**Projektmatrikler:** {', '.join(report.target_parcel_numbers)}",
+                f"**Ejendommens matrikler:** {', '.join(report.available_parcel_numbers) or 'Ikke angivet'}",
                 f"**Ajour pr. dato:** {report.as_of_date.isoformat() if report.as_of_date else 'Ikke angivet'}",
                 "",
             ]
@@ -59,10 +59,10 @@ def build_markdown_report(report: Report) -> str:
 
     parts.append("## Rapportposter")
     parts.append("")
-    for entry in report.servitutter:
+    for entry in report.entries:
         parts.extend(
             [
-                f"### {entry.nr}. {entry.description or 'Ingen beskrivelse'}",
+                f"### {entry.sequence_number}. {entry.description or 'Ingen beskrivelse'}",
                 f"- Dato/løbenummer: {entry.date_reference or 'Ikke angivet'}",
                 f"- Påtaleberettiget: {entry.beneficiary or 'Ikke angivet'}",
                 f"- Rådighed/tilstand: {entry.disposition or 'Ikke angivet'}",
@@ -79,11 +79,11 @@ def build_html_report(report: Report, case) -> str:
     case_name = case.name
     address = case.address or "Ikke angivet"
     external_ref = case.external_ref or "Ikke angivet"
-    target_matrikel = ", ".join(report.target_matrikler) if report.target_matrikler else "Ikke valgt"
-    all_matrikler = ", ".join(report.available_matrikler) or "Ikke angivet"
-    relevant_count = sum(1 for entry in report.servitutter if (entry.scope or "") == "Ja")
-    maybe_count = sum(1 for entry in report.servitutter if (entry.scope or "Måske") == "Måske")
-    non_relevant_count = sum(1 for entry in report.servitutter if (entry.scope or "") == "Nej")
+    primary_parcel_number = ", ".join(report.target_parcel_numbers) if report.target_parcel_numbers else "Ikke valgt"
+    all_matrikler = ", ".join(report.available_parcel_numbers) or "Ikke angivet"
+    relevant_count = sum(1 for entry in report.entries if (entry.scope or "") == "Ja")
+    maybe_count = sum(1 for entry in report.entries if (entry.scope or "Måske") == "Måske")
+    non_relevant_count = sum(1 for entry in report.entries if (entry.scope or "") == "Nej")
 
     note_block = ""
     if report.notes:
@@ -95,7 +95,7 @@ def build_html_report(report: Report, case) -> str:
         """
 
     rows = []
-    for entry in report.servitutter:
+    for entry in report.entries:
         scope = entry.scope or ("Ja" if entry.relevant_for_project else "Måske")
         scope_text = entry.scope_detail or scope
         relevant_class = {"Ja": "relevant-row", "Måske": "maybe-row", "Nej": ""}.get(scope, "")
@@ -111,7 +111,7 @@ def build_html_report(report: Report, case) -> str:
             "orange": ("background:#fef3e2;color:#c96f2d;border-color:rgba(201,111,45,0.3)", "orange"),
             "sort": ("background:#f4eee6;color:#665c54;border-color:#ddd2c6", "sort"),
         }
-        bm = (entry.byggeri_markering or "").lower()
+        bm = (entry.construction_impact or "").lower()
         if bm in byggeri_styles:
             bm_style, bm_label = byggeri_styles[bm]
             byggeri_html = f'<span style="display:inline-flex;padding:3px 9px;border-radius:999px;font:700 11px/1.2 sans-serif;border:1px solid;{bm_style}">{bm_label}</span>'
@@ -120,7 +120,7 @@ def build_html_report(report: Report, case) -> str:
         rows.append(
             f"""
             <tr class="{relevant_class}">
-              <td>{entry.nr}</td>
+              <td>{entry.sequence_number}</td>
               <td>{html.escape(entry.date_reference or "—")}</td>
               <td>{html.escape(entry.title or "—")}</td>
               <td>{byggeri_html}</td>
@@ -466,14 +466,14 @@ def build_html_report(report: Report, case) -> str:
                   </div>
                   <div class="meta-card">
                     <div class="meta-label">Målmatrikel</div>
-                    <div class="meta-value">{html.escape(target_matrikel)}</div>
+                    <div class="meta-value">{html.escape(primary_parcel_number)}</div>
                   </div>
                 </div>
               </section>
 
               <section class="summary-grid">
                 <div class="summary-card">
-                  <div class="summary-number">{len(report.servitutter)}</div>
+                  <div class="summary-number">{len(report.entries)}</div>
                   <div class="summary-copy">Servitutter i rapporten</div>
                 </div>
                 <div class="summary-card">
@@ -493,7 +493,7 @@ def build_html_report(report: Report, case) -> str:
               <section>
                 <h2>Afgrænsning</h2>
                 <div class="notes">
-                  <p>Redegørelsen er afgrænset til målmatriklen <strong>{html.escape(target_matrikel)}</strong>.
+                  <p>Redegørelsen er afgrænset til målmatriklen <strong>{html.escape(primary_parcel_number)}</strong>.
                   Ejendommen omfatter matriklerne {html.escape(all_matrikler)}.</p>
                 </div>
               </section>
@@ -534,7 +534,7 @@ def build_html_report(report: Report, case) -> str:
                 Rapport-id: {html.escape(report.report_id)}<br />
                 Oprettet: {report.created_at.strftime("%Y-%m-%d %H:%M")}<br />
                 Journal / Reference: {html.escape(external_ref)}<br />
-                Målmatrikel: {html.escape(target_matrikel)}
+                Målmatrikel: {html.escape(primary_parcel_number)}
               </div>
             </div>
             {note_block}

@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 # Chunk scoring constants
 # ---------------------------------------------------------------------------
 
-_SCORE_AKT_NR         = 10   # eksakt akt_nr-match (normaliseret)
+_SCORE_AKT_NR         = 10   # eksakt archive_number-match (normaliseret)
 _SCORE_DATE_REF       = 5    # date_reference-match (normaliseret)
 _SCORE_LOB_SUFFIX     = 3    # løbenummer-suffix match
 _SCORE_MATRIKEL       = 2    # matrikelreference
@@ -42,7 +42,7 @@ _TITLE_STOPWORDS = {
 }
 
 _SCORING_RULE_META = {
-    "akt_nr": {
+    "archive_number": {
         "label": "Akt nr.",
         "weight": _SCORE_AKT_NR,
         "description": "Eksakt match på normaliseret aktnummer",
@@ -86,9 +86,9 @@ def _resolve_extraction_model() -> str | None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _normalize_akt_nr(akt_nr: str) -> str:
-    """Strip spaces, hyphens and lowercase — used for fuzzy akt_nr comparison."""
-    return re.sub(r"[\s\-]", "", akt_nr).lower()
+def _normalize_akt_nr(archive_number: str) -> str:
+    """Strip spaces, hyphens and lowercase — used for fuzzy archive_number comparison."""
+    return re.sub(r"[\s\-]", "", archive_number).lower()
 
 
 def get_chunk_scoring_rules(context_window: int = 1) -> dict:
@@ -113,9 +113,9 @@ def _canonical_ref_summary(servitut: Servitut) -> dict:
     return {
         "date_reference": servitut.date_reference or "—",
         "title": servitut.title or "—",
-        "akt_nr": servitut.akt_nr or "—",
-        "applies_to_matrikler": list(servitut.applies_to_matrikler or []),
-        "raw_matrikel_references": list(servitut.raw_matrikel_references or []),
+        "archive_number": servitut.archive_number or "—",
+        "applies_to_parcel_numbers": list(servitut.applies_to_parcel_numbers or []),
+        "raw_parcel_references": list(servitut.raw_parcel_references or []),
         "raw_scope_text": servitut.raw_scope_text or "—",
     }
 
@@ -155,9 +155,9 @@ def _add_signal_catalog_entry(
 def build_scoring_signal_catalog(canonical_list: List[Servitut]) -> dict[str, dict]:
     catalog: dict[str, dict] = {}
     for servitut in canonical_list:
-        if servitut.akt_nr:
-            normalized = _normalize_akt_nr(servitut.akt_nr)
-            _add_signal_catalog_entry(catalog, "akt_nr", normalized, servitut.akt_nr, servitut)
+        if servitut.archive_number:
+            normalized = _normalize_akt_nr(servitut.archive_number)
+            _add_signal_catalog_entry(catalog, "archive_number", normalized, servitut.archive_number, servitut)
 
         if servitut.date_reference:
             normalized_date = re.sub(r"[\s.\-]", "", servitut.date_reference).lower()
@@ -174,7 +174,7 @@ def build_scoring_signal_catalog(canonical_list: List[Servitut]) -> dict[str, di
                 normalized_lob = re.sub(r"[\s.\-]", "", lob).lower()
                 _add_signal_catalog_entry(catalog, "lob_suffix", normalized_lob, lob, servitut)
 
-        for matrikel in (servitut.applies_to_matrikler or []):
+        for matrikel in (servitut.applies_to_parcel_numbers or []):
             if matrikel:
                 _add_signal_catalog_entry(
                     catalog,
@@ -234,9 +234,9 @@ def describe_scoring_inputs(canonical_list: List[Servitut]) -> dict:
             {
                 "date_reference": servitut.date_reference or "—",
                 "title": servitut.title or "—",
-                "akt_nr": servitut.akt_nr or "—",
-                "applies_to_matrikler": list(servitut.applies_to_matrikler or []),
-                "raw_matrikel_references": list(servitut.raw_matrikel_references or []),
+                "archive_number": servitut.archive_number or "—",
+                "applies_to_parcel_numbers": list(servitut.applies_to_parcel_numbers or []),
+                "raw_parcel_references": list(servitut.raw_parcel_references or []),
                 "raw_scope_text": servitut.raw_scope_text or "—",
                 "derived_signals": derived_signals,
             }
@@ -253,18 +253,18 @@ def describe_scoring_inputs(canonical_list: List[Servitut]) -> dict:
 def _find_relevant_chunks(
     chunk_list: List[Chunk],
     date_ref: Optional[str],
-    akt_nr: Optional[str],
+    archive_number: Optional[str],
 ) -> List[Chunk]:
     """
-    Return chunks that mention this servitut's date_reference or akt_nr.
+    Return chunks that mention this servitut's date_reference or archive_number.
     Falls back to the first three chunks if no keyword match is found.
     """
     needles: list[str] = []
     if date_ref:
         # Normalised: strip internal spaces/hyphens for loose substring matching
         needles.append(re.sub(r"[\s\-]", "", date_ref).lower())
-    if akt_nr:
-        needles.append(_normalize_akt_nr(akt_nr))
+    if archive_number:
+        needles.append(_normalize_akt_nr(archive_number))
 
     if needles:
         matching = [
@@ -280,9 +280,9 @@ def _find_relevant_chunks(
 def _make_akt_evidence(
     chunk_list: List[Chunk],
     date_ref: Optional[str] = None,
-    akt_nr: Optional[str] = None,
+    archive_number: Optional[str] = None,
 ) -> List[Evidence]:
-    relevant = _find_relevant_chunks(chunk_list, date_ref, akt_nr)
+    relevant = _find_relevant_chunks(chunk_list, date_ref, archive_number)
     return [
         Evidence(
             chunk_id=c.chunk_id,
@@ -298,7 +298,7 @@ def _build_canonical_json(canonical_list: List[Servitut]) -> str:
     items = [
         {
             "date_reference": s.date_reference,
-            "akt_nr": s.akt_nr,
+            "archive_number": s.archive_number,
             "title": s.title,
         }
         for s in canonical_list
@@ -316,21 +316,21 @@ def _resolve_canonical_key(
     Map an LLM-returned enrichment item back to a canonical date_reference key.
 
     Returns (canonical_key, priority) where priority indicates match strength:
-      1 = Normalised akt_nr match (direct — strongest)
+      1 = Normalised archive_number match (direct — strongest)
       2 = Exact date_reference match
       3 = Fuzzy date matching (løbenummer suffix → full date → unikt år)
     Returns None if no canonical is found.
     """
-    item_akt = item.get("akt_nr")
+    item_akt = item.get("archive_number")
     item_date = item.get("date_reference") or ""
     if item_akt:
         key = _normalize_akt_nr(item_akt)
         candidates = canonical_by_akt.get(key, [])
         if len(candidates) == 1:
-            # Unambiguous akt_nr match
+            # Unambiguous archive_number match
             return (candidates[0], 1)
         elif len(candidates) > 1:
-            # Ambiguous akt_nr (same arkivskab, multiple servitutter) —
+            # Ambiguous archive_number (same arkivskab, multiple servitutter) —
             # disambiguate via date_reference if LLM provided one
             if item_date:
                 exact = canonical_by_date.get(item_date)
@@ -338,12 +338,12 @@ def _resolve_canonical_key(
                     return (exact, 1)
                 # Fuzzy: find which candidate year matches item_date
                 if canonical_list:
-                    pseudo = Servitut(servitut_id="__tmp__", case_id="", source_document="", date_reference=item_date)
+                    pseudo = Servitut(easement_id="__tmp__", case_id="", source_document="", date_reference=item_date)
                     for canonical in canonical_list:
                         if (canonical.date_reference or "") in candidates and _servitut_matches(canonical, pseudo, canonical_years):
                             return (canonical.date_reference or "", 1)
             # Cannot disambiguate — fall through to date-based matching below
-            logger.debug(f"Ambigt akt_nr {item_akt!r} → {candidates} — falder tilbage til dato-match")
+            logger.debug(f"Ambigt archive_number {item_akt!r} → {candidates} — falder tilbage til dato-match")
 
     exact = canonical_by_date.get(item_date)
     if exact:
@@ -351,7 +351,7 @@ def _resolve_canonical_key(
 
     # Priority 3: fuzzy date matching
     if item_date and canonical_list:
-        pseudo = Servitut(servitut_id="__tmp__", case_id="", source_document="", date_reference=item_date)
+        pseudo = Servitut(easement_id="__tmp__", case_id="", source_document="", date_reference=item_date)
         for canonical in canonical_list:
             if _servitut_matches(canonical, pseudo, canonical_years):
                 return (canonical.date_reference or "", 3)
@@ -366,7 +366,7 @@ def _resolve_canonical_key(
 def build_scoring_signals(canonical_list: List[Servitut]) -> dict[str, set[str]]:
     """Preberegn normaliserede søgesignaler fra canonical-listen."""
     signals: dict[str, set[str]] = {
-        "akt_nr": set(),
+        "archive_number": set(),
         "date_ref": set(),
         "lob_suffix": set(),
         "matrikel": set(),
@@ -461,10 +461,10 @@ def score_chunks(
         score = 0
         reasons: list[str] = []
 
-        for sig in signals["akt_nr"]:
+        for sig in signals["archive_number"]:
             if sig and sig in text_norm:
                 score += _SCORE_AKT_NR
-                reasons.append(f"akt_nr:{sig}")
+                reasons.append(f"archive_number:{sig}")
         for sig in signals["date_ref"]:
             if sig and sig in text_norm:
                 score += _SCORE_DATE_REF
@@ -612,7 +612,7 @@ def enrich_canonical_list(
     Canonical-driven enrichment.
 
     For each akt document, one LLM call returns the subset of canonical
-    servitutter it describes.  Matching uses akt_nr (normalised) first,
+    servitutter it describes.  Matching uses archive_number (normalised) first,
     then date_reference.  Evidence chunks are chosen by keyword proximity
     to the matched servitut, not positionally.
     """
@@ -627,12 +627,12 @@ def enrich_canonical_list(
         (s.date_reference or ""): (s.date_reference or "")
         for s in canonical_list
     }
-    # Byg akt_nr → liste af canonical keys (et akt_nr kan referere til flere servitutter
+    # Byg archive_number → liste af canonical keys (et archive_number kan referere til flere servitutter
     # der deler samme fysiske arkivskab, f.eks. 40_C_239 → 1903 + 1975)
     canonical_by_akt: dict[str, list[str]] = {}
     for s in canonical_list:
-        if s.akt_nr:
-            key = _normalize_akt_nr(s.akt_nr)
+        if s.archive_number:
+            key = _normalize_akt_nr(s.archive_number)
             canonical_by_akt.setdefault(key, []).append(s.date_reference or "")
     # Year-frequency table for fuzzy matching (unambiguous year → 1 match)
     canonical_years: dict[str, int] = {}
@@ -641,7 +641,7 @@ def enrich_canonical_list(
         if y:
             canonical_years[y] = canonical_years.get(y, 0) + 1
     # key (canonical date_reference) → (best item dict, doc_id, chunk_list, priority)
-    # priority 1=akt_nr match, 2=exact date, 3=fuzzy date — lower = better
+    # priority 1=archive_number match, 2=exact date, 3=fuzzy date — lower = better
     best_by_key: dict[str, tuple[dict, str, List[Chunk], int]] = {}
     # orphan_key → (item, doc_id, chunk_list) — fundet i akt men ikke i attest
     orphan_best: dict[str, tuple[dict, str, List[Chunk]]] = {}
@@ -692,7 +692,7 @@ def enrich_canonical_list(
             result_key = _resolve_canonical_key(item, canonical_by_date, canonical_by_akt, canonical_list, canonical_years)
             if result_key is None:
                 # Ikke i tinglysningsattest — gem som ubekræftet
-                orphan_key = _normalize_akt_nr(item.get("akt_nr") or "") or (item.get("date_reference") or "")
+                orphan_key = _normalize_akt_nr(item.get("archive_number") or "") or (item.get("date_reference") or "")
                 if orphan_key and orphan_key not in orphan_best:
                     orphan_best[orphan_key] = (item, doc_id, chunk_list)
                 elif orphan_key:
@@ -701,7 +701,7 @@ def enrich_canonical_list(
                         orphan_best[orphan_key] = (item, doc_id, chunk_list)
                 logger.debug(
                     f"Umatched enrichment item (not in attest): "
-                    f"date={item.get('date_reference')!r}, akt_nr={item.get('akt_nr')!r}"
+                    f"date={item.get('date_reference')!r}, archive_number={item.get('archive_number')!r}"
                 )
                 continue
             key, priority = result_key
@@ -725,26 +725,26 @@ def enrich_canonical_list(
         if entry:
             item, doc_id, chunk_list, _priority = entry
             enriched_date = coerce_optional_str(item.get("date_reference")) or canonical.date_reference
-            enriched_akt_nr = coerce_optional_str(item.get("akt_nr")) or canonical.akt_nr
-            applies_to_matrikler = coerce_str_list(item.get("applies_to_matrikler"))
+            enriched_akt_nr = coerce_optional_str(item.get("archive_number")) or canonical.archive_number
+            applies_to_parcel_numbers = coerce_str_list(item.get("applies_to_parcel_numbers"))
             akt_srv = Servitut(
-                servitut_id=generate_servitut_id(),
+                easement_id=generate_servitut_id(),
                 case_id=case_id,
                 source_document=doc_id,
                 date_reference=enriched_date,
                 registered_at=parse_registered_at(item.get("registered_at"), enriched_date),
-                akt_nr=enriched_akt_nr,
+                archive_number=enriched_akt_nr,
                 title=coerce_optional_str(item.get("title")) or canonical.title,
                 summary=coerce_optional_str(item.get("summary")),
                 beneficiary=coerce_optional_str(item.get("beneficiary")),
                 disposition_type=coerce_optional_str(item.get("disposition_type")),
                 legal_type=coerce_optional_str(item.get("legal_type")),
                 construction_relevance=bool(item.get("construction_relevance", False)),
-                byggeri_markering=coerce_optional_str(item.get("byggeri_markering")),
+                construction_impact=coerce_optional_str(item.get("construction_impact")),
                 action_note=coerce_optional_str(item.get("action_note")),
-                applies_to_matrikler=applies_to_matrikler,
-                raw_matrikel_references=coerce_str_list(item.get("raw_matrikel_references"))
-                or applies_to_matrikler,
+                applies_to_parcel_numbers=applies_to_parcel_numbers,
+                raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
+                or applies_to_parcel_numbers,
                 raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
                 or coerce_optional_str(item.get("scope_basis")),
                 scope_source=coerce_optional_str(item.get("scope_source")) or "akt",
@@ -762,25 +762,25 @@ def enrich_canonical_list(
     unconfirmed_count = 0
     for orphan_key, (item, doc_id, chunk_list) in orphan_best.items():
         enriched_date = coerce_optional_str(item.get("date_reference"))
-        enriched_akt_nr = coerce_optional_str(item.get("akt_nr"))
+        enriched_akt_nr = coerce_optional_str(item.get("archive_number"))
         srv = Servitut(
-            servitut_id=generate_servitut_id(),
+            easement_id=generate_servitut_id(),
             case_id=case_id,
             source_document=doc_id,
             date_reference=enriched_date,
             registered_at=parse_registered_at(item.get("registered_at"), enriched_date),
-            akt_nr=enriched_akt_nr,
+            archive_number=enriched_akt_nr,
             title=coerce_optional_str(item.get("title")),
             summary=coerce_optional_str(item.get("summary")),
             beneficiary=coerce_optional_str(item.get("beneficiary")),
             disposition_type=coerce_optional_str(item.get("disposition_type")),
             legal_type=coerce_optional_str(item.get("legal_type")),
             construction_relevance=bool(item.get("construction_relevance", False)),
-            byggeri_markering=coerce_optional_str(item.get("byggeri_markering")),
+            construction_impact=coerce_optional_str(item.get("construction_impact")),
             action_note=coerce_optional_str(item.get("action_note")),
-            applies_to_matrikler=coerce_str_list(item.get("applies_to_matrikler")),
-            raw_matrikel_references=coerce_str_list(item.get("raw_matrikel_references"))
-            or coerce_str_list(item.get("applies_to_matrikler")),
+            applies_to_parcel_numbers=coerce_str_list(item.get("applies_to_parcel_numbers")),
+            raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
+            or coerce_str_list(item.get("applies_to_parcel_numbers")),
             raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
             or coerce_optional_str(item.get("scope_basis")),
             scope_source=coerce_optional_str(item.get("scope_source")) or "akt",
@@ -788,7 +788,7 @@ def enrich_canonical_list(
             scope_confidence=item.get("scope_confidence"),
             confidence=float(item.get("confidence", 0.5) or 0.5),
             evidence=_make_akt_evidence(chunk_list, enriched_date, enriched_akt_nr),
-            attest_confirmed=False,
+            confirmed_by_attest=False,
         )
         result.append(srv)
         unconfirmed_count += 1

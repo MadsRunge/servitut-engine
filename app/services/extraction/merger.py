@@ -11,8 +11,8 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
     """Berig canonical servitut med detaljer fra akt."""
     canonical_has_scope = any(
         [
-            canonical.applies_to_matrikler,
-            canonical.raw_matrikel_references,
+            canonical.applies_to_parcel_numbers,
+            canonical.raw_parcel_references,
             canonical.raw_scope_text,
         ]
     )
@@ -23,8 +23,8 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
         "registered_at": canonical.registered_at or akt_srv.registered_at,
     }
 
-    if akt_srv.akt_nr:
-        updates["akt_nr"] = akt_srv.akt_nr
+    if akt_srv.archive_number:
+        updates["archive_number"] = akt_srv.archive_number
     if akt_srv.summary:
         updates["summary"] = akt_srv.summary
     if akt_srv.beneficiary:
@@ -35,23 +35,23 @@ def _enrich_canonical(canonical: Servitut, akt_srv: Servitut) -> Servitut:
         updates["legal_type"] = akt_srv.legal_type
     if akt_srv.action_note:
         updates["action_note"] = akt_srv.action_note
-    if akt_srv.byggeri_markering:
-        updates["byggeri_markering"] = akt_srv.byggeri_markering
+    if akt_srv.construction_impact:
+        updates["construction_impact"] = akt_srv.construction_impact
     if akt_srv.construction_relevance:
         updates["construction_relevance"] = True
     # Attest-scope er source of truth. Akt må kun udfylde scope hvis canonical mangler
     # eksplicit scope-evidens.
     if not canonical_has_scope:
-        if akt_srv.applies_to_matrikler:
-            updates["applies_to_matrikler"] = akt_srv.applies_to_matrikler
-        if akt_srv.raw_matrikel_references:
-            updates["raw_matrikel_references"] = akt_srv.raw_matrikel_references
+        if akt_srv.applies_to_parcel_numbers:
+            updates["applies_to_parcel_numbers"] = akt_srv.applies_to_parcel_numbers
+        if akt_srv.raw_parcel_references:
+            updates["raw_parcel_references"] = akt_srv.raw_parcel_references
         if akt_srv.raw_scope_text:
             updates["raw_scope_text"] = akt_srv.raw_scope_text
         if akt_srv.scope_source:
             updates["scope_source"] = akt_srv.scope_source
-        if akt_srv.applies_to_target_matrikel is not None:
-            updates["applies_to_target_matrikel"] = akt_srv.applies_to_target_matrikel
+        if akt_srv.applies_to_primary_parcel is not None:
+            updates["applies_to_primary_parcel"] = akt_srv.applies_to_primary_parcel
         if akt_srv.scope_basis:
             updates["scope_basis"] = akt_srv.scope_basis
         if akt_srv.scope_confidence is not None:

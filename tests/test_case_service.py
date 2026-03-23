@@ -1,7 +1,9 @@
 import pytest
+from fastapi import HTTPException
 
 from app.core.config import settings
 from app.db.database import create_tables, get_session_ctx, reset_engine_cache
+from app.services.auth_service import create_user
 from app.services.case_service import (
     add_document_to_case,
     create_case,
@@ -10,6 +12,7 @@ from app.services.case_service import (
     list_cases,
     update_target_matrikel,
     update_case_status,
+    verify_case_ownership,
 )
 
 
@@ -105,7 +108,41 @@ def test_storage_round_trip():
 def test_update_target_matrikel():
     with get_session_ctx() as session:
         case = create_case(session, "Matrikel test")
-        case.matrikler = []
+        case.parcels = []
         loaded = update_target_matrikel(session, case.case_id, "0005ay")
         assert loaded is not None
-        assert loaded.target_matrikel == "0005ay"
+        assert loaded.primary_parcel_number == "0005ay"
+
+
+def test_verify_case_ownership_returns_owned_case():
+    with get_session_ctx() as session:
+        user = create_user(session, email="owner@example.com", password="secret123")
+        case = create_case(session, "Ejet sag", user_id=user.id)
+
+        owned_case = verify_case_ownership(session, case.case_id, user.id)
+
+        assert owned_case.case_id == case.case_id
+
+
+def test_verify_case_ownership_rejects_foreign_case():
+    with get_session_ctx() as session:
+        owner = create_user(session, email="owner-foreign@example.com", password="secret123")
+        viewer = create_user(session, email="viewer-foreign@example.com", password="secret123")
+        case = create_case(session, "Fremmed sag", user_id=owner.id)
+
+        with pytest.raises(HTTPException) as exc:
+            verify_case_ownership(session, case.case_id, viewer.id)
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Forbidden"
+
+
+def test_verify_case_ownership_rejects_missing_case():
+    with get_session_ctx() as session:
+        user = create_user(session, email="missing-case@example.com", password="secret123")
+
+        with pytest.raises(HTTPException) as exc:
+            verify_case_ownership(session, "case-missing", user.id)
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Forbidden"

@@ -8,7 +8,7 @@ Du har modtaget et aktuddrag og en liste over kendte servitutter fra en tinglysn
 Din opgave er at finde de servitutter fra listen, som faktisk er beskrevet i akten, og berige dem med detaljer.
 
 DETTE AKTDOKUMENT: {akt_dok_hint}
-Brug dette som ankerpunkt: hvis aktens akt_nr eller løbenummer kan matches direkte mod én af de
+Brug dette som ankerpunkt: hvis aktens archive_number eller løbenummer kan matches direkte mod én af de
 kendte servitutter, er den sandsynligvis aktens primære emne. Andre servitutter i akten kan
 sagtens beskrives — men vær opmærksom på, at teksten kan nævne ældre/naboservitutter som kontekst
 uden at de er aktens egentlige indhold. Bedøm ud fra aktens primære juridiske indhold.
@@ -21,7 +21,7 @@ KENDTE SERVITUTTER (fra tinglysningsattest):
 
 For HVER servitut du genkender i akten, returner et JSON-objekt med disse felter:
 - date_reference: Kopiér præcist fra den kendte servitut (bruges som nøgle til matching).
-- akt_nr: Kopiér præcist fra den kendte servitut (bruges som nøgle til matching).
+- archive_number: Kopiér præcist fra den kendte servitut (bruges som nøgle til matching).
 - registered_at: Tinglysningsdato som ISO-dato `YYYY-MM-DD`, hvis den fremgår sikkert af date_reference eller teksten. Brug null hvis ukendt.
 - summary: Beskrivelse af servituttens indhold — hvad den regulerer og hvad den forbyder/tillader.
   Inkludér konkrete mål og begrænsninger hvis de fremgår (fx bredde på passage, bebyggelsesgrad, afstandskrav).
@@ -63,7 +63,7 @@ For HVER servitut du genkender i akten, returner et JSON-objekt med disse felter
                      Eksempler: vejret til naboejendommen, ledningsret, fælles indkørsel, hegnsforpligtelse.
     Brug null hvis uklart.
 - construction_relevance: true hvis servitutten kan have betydning for fremtidigt byggeri eller ombygning, false ellers.
-- byggeri_markering: Klassificér servituttens betydning for fremtidigt byggeri efter dansk landinspektørpraksis:
+- construction_impact: Klassificér servituttens betydning for fremtidigt byggeri efter dansk landinspektørpraksis:
 
     "rød"    — Servitutten definerer direkte HVOR og I HVILKEN STØRRELSE der må bygges.
                Disse er direkte barrierer for placering af bebyggelse:
@@ -99,16 +99,16 @@ For HVER servitut du genkender i akten, returner et JSON-objekt med disse felter
              "Passagekorridoren skal respekteres ved placering af bebyggelse",
              "Kontakt HOFOR om flytning af transformeranlæg",
              "Ingen handling nødvendig".
-- applies_to_matrikler: Liste over matrikelnumre fra ejendommens NUVÆRENDE matrikler, som servitutten gælder for.
+- applies_to_parcel_numbers: Liste over matrikelnumre fra ejendommens NUVÆRENDE matrikler, som servitutten gælder for.
     REGLER FOR SCOPE-VURDERING:
     * Brug KUN matrikelnumre der er eksplicit nævnt i aktteksten eller kan kobles direkte og utvetydigt til de kendte servitutter.
     * Inkludér KUN numre der fremgår af listen over ejendommens matrikler ovenfor.
     * Hvis akten beskriver et historisk/gammelt matrikelnummer som ikke entydigt matcher de nuværende matrikler, returner [].
     * Gæt ALDRIG på scope. Hellere [] end et forkert matrikelnummer.
-- raw_matrikel_references: Liste over ALLE rå matrikelhenvisninger du finder i akten for denne servitut, også historiske numre der ikke matcher de nuværende matrikler. Normaliser til lowercase og bevar numrene tekstnært.
+- raw_parcel_references: Liste over ALLE rå matrikelhenvisninger du finder i akten for denne servitut, også historiske numre der ikke matcher de nuværende matrikler. Normaliser til lowercase og bevar numrene tekstnært.
 - raw_scope_text: Kort citat eller tekstnær gengivelse af den del af akten der begrunder scope (fx "vedr. matr.nr. 1o og 1v" eller "ledning over matr.nr. 1m"). Brug null hvis intet eksplicit scope kan findes.
 - scope_source: Sæt altid denne til "akt".
-- scope_basis: Kort forklaring på hvorfor applies_to_matrikler er sat som den er (fx "Eksplicit nævnt: matr.nr. 1o og 1v" eller "Kun historisk matrikel 1a nævnt, derfor ingen sikker mapping").
+- scope_basis: Kort forklaring på hvorfor applies_to_parcel_numbers er sat som den er (fx "Eksplicit nævnt: matr.nr. 1o og 1v" eller "Kun historisk matrikel 1a nævnt, derfor ingen sikker mapping").
 - scope_confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på scope-vurderingen.
 - confidence: Et tal mellem 0.0 og 1.0 der angiver din sikkerhed på udtrækket.
 
@@ -116,7 +116,7 @@ NULL-PRINCIP: Returner null for ethvert felt du ikke finder direkte evidens for 
 Gæt aldrig. En null-værdi er bedre end et forkert felt.
 
 MATCHING: Hvis akten omtaler et løbenummer eller en dato der svarer til én af de kendte
-servitutter, kopiér date_reference og akt_nr præcist fra den kendte servitut — brug ikke
+servitutter, kopiér date_reference og archive_number præcist fra den kendte servitut — brug ikke
 aktens eventuelle reformattering.
 
 VIGTIGT:
