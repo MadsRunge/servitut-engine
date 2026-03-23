@@ -20,6 +20,11 @@ def reset_engine_cache() -> None:
     _build_engine.cache_clear()
 
 
+def uses_sqlite(database_url: str | None = None) -> bool:
+    url = database_url or settings.DATABASE_URL
+    return url.startswith("sqlite")
+
+
 def create_tables() -> None:
     """Opretter alle tabeller defineret i app/db/models.py (idempotent)."""
     # Sørg for at alle tabelmodeller er importeret, inden SQLModel.metadata køres
@@ -27,6 +32,12 @@ def create_tables() -> None:
     from app.models import user  # noqa: F401
 
     SQLModel.metadata.create_all(get_engine())
+
+
+def initialize_database() -> None:
+    """Initialiser lokale SQLite-miljøer. PostgreSQL styres via Alembic migrations."""
+    if uses_sqlite():
+        create_tables()
 
 
 def get_session():

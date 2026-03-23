@@ -53,7 +53,7 @@ Den valgte LLM-provider bruges to gange: én gang til at udtrække facts som JSO
 |-----------|-----------|-------------|
 | PDF parsing | `pdfplumber` | Python-native, ingen externe tools, god tekstekstraktion fra digitale PDFer |
 | LLM | Anthropic Claude eller DeepSeek | Provider styres via `.env`, så model og nøgle kan skiftes uden kodeændringer |
-| Storage | Lokale JSON-filer | Simpel, debugbar, ingen database-afhængighed i v1 |
+| Storage | PostgreSQL + lokale filer | Strukturerede data i PostgreSQL, binære artefakter som PDF/OCR-filer på disk |
 | API | FastAPI + Pydantic v2 | Type-sikker, hurtig, god swagger-dokumentation |
 | UI | Streamlit | Hurtig prototype-UI med minimal boilerplate |
 | Dependency mgmt | `uv` + `pyproject.toml` | Hurtig, reproducerbar, moderne Python tooling |
@@ -104,6 +104,11 @@ servitut-engine/
 │       ├── 5_Extract_Servitutter.py # Trigger ekstraktion, vis JSON + confidence
 │       ├── 6_Generate_Report.py    # Generer rapport, vis Markdown-tabel
 │       └── 7_Review.py             # Sporbarhed: servitut → chunks → kilde-side
+├── alembic/
+│   ├── env.py                      # Alembic-konfiguration mod appens SQLModel metadata
+│   └── versions/                   # Versionsstyrede database-migrations
+├── alembic.ini                     # Alembic entrypoint og standard-DB URL
+├── docker-compose.yml              # Lokal PostgreSQL til udvikling
 ├── prompts/
 │   ├── extract_servitut.txt        # Dansk prompt til struktureret JSON-udtræk
 │   └── generate_report.txt         # Dansk prompt til rapport-formulering
@@ -122,23 +127,20 @@ servitut-engine/
 
 ---
 
-## Storage-layout (pr. case)
+## Storage-layout (runtime)
 
 ```
 storage/cases/{case_id}/
-  case.json                         # Case-metadata + document_ids + status
   documents/{doc_id}/
     original.pdf                    # Uploadet PDF
-    metadata.json                   # Dokument-metadata (uden pages)
-    pages.json                      # Side-for-side tekst + extraction_method
-    chunks.json                     # Alle chunks for dokumentet
-  servitutter/
-    {servitut_id}.json              # Én fil pr. udtrukket servitut
-  reports/
-    {report_id}.json                # Rapport med entries + markdown_content
+    ocr.pdf                         # OCR-behandlet PDF
+  ocr/
+    {doc_id}_pages.json             # OCR-sider på disk til friskhedstjek
 ```
 
-Hver fil er plain JSON, fuldt læsbar og debuggbar uden særlige tools.
+Strukturerede objekter som cases, dokumentmetadata, chunks, servitutter, rapporter
+og jobs gemmes i PostgreSQL. Disklayoutet ovenfor bruges kun til binære artefakter
+og enkelte OCR-sidefiler.
 
 ---
 
@@ -148,6 +150,7 @@ Hver fil er plain JSON, fuldt læsbar og debuggbar uden særlige tools.
 
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) installeret
+- Docker Desktop eller en lokal PostgreSQL 16+ instans
 - En Anthropic API-nøgle
 
 ### 1. Installer afhængigheder
@@ -173,6 +176,7 @@ MODEL=claude-sonnet-4-6
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 LLM_TIMEOUT_SECONDS=120
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/servitut
 STORAGE_DIR=storage
 PROMPTS_DIR=prompts
 MAX_CHUNK_SIZE=2000
@@ -187,7 +191,27 @@ DEEPSEEK_API_KEY=sk-...
 MODEL=deepseek-chat
 ```
 
-### 3. Start API-serveren
+### 3. Start PostgreSQL lokalt
+
+Anbefalet lokalt setup er Docker Compose:
+
+```bash
+docker compose up -d postgres
+```
+
+Det starter PostgreSQL på `127.0.0.1:5432` og opretter databasen `servitut`
+automatisk.
+
+### 4. Kør database-migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+Alembic opretter også tabellen `alembic_version`, så I får et audit trail over
+hvilke migrations der er kørt.
+
+### 5. Start API-serveren
 
 ```bash
 uv run uvicorn app.api.main:app --reload
@@ -195,7 +219,7 @@ uv run uvicorn app.api.main:app --reload
 
 API kører på `http://localhost:8000`. Swagger-dokumentation: `http://localhost:8000/docs`.
 
-### 4. Start Streamlit UI
+### 6. Start Streamlit UI
 
 ```bash
 uv run streamlit run streamlit_app/Home.py
@@ -203,10 +227,30 @@ uv run streamlit run streamlit_app/Home.py
 
 UI kører på `http://localhost:8501`.
 
-### 5. Kør tests
+### 7. Kør tests
 
 ```bash
 uv run pytest tests/ -v
+```
+
+## Migrationer
+
+Opret en ny migration:
+
+```bash
+uv run alembic revision --autogenerate -m "beskriv ændringen"
+```
+
+Anvend seneste migration:
+
+```bash
+uv run alembic upgrade head
+```
+
+Se nuværende migrationsniveau:
+
+```bash
+uv run alembic current
 ```
 
 ---
