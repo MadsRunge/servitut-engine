@@ -61,6 +61,8 @@ def test_register_login_and_me():
 def test_cases_require_bearer_token():
     response = client.get("/cases")
     assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+    assert response.json()["error"]["message"] == "Not authenticated"
 
 
 def test_list_cases_only_returns_owned_cases():
@@ -170,4 +172,5 @@ def test_case_scoped_routes_return_403_for_foreign_case(method, path_template, r
     )
 
     assert response.status_code == 403
-    assert response.json() == {"detail": "Forbidden"}
+    assert response.json()["error"]["code"] == "forbidden"
+    assert response.json()["error"]["message"] == "Forbidden"

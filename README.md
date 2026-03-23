@@ -177,6 +177,9 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 LLM_TIMEOUT_SECONDS=120
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/servitut
+REDIS_URL=redis://127.0.0.1:6379/0
+CORS_ALLOW_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+CORS_ALLOW_CREDENTIALS=true
 STORAGE_DIR=storage
 PROMPTS_DIR=prompts
 MAX_CHUNK_SIZE=2000
@@ -318,6 +321,10 @@ Alle indstillinger styres via `.env` og eksponeres som Pydantic `BaseSettings`:
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Base URL for DeepSeek OpenAI-kompatibelt endpoint |
 | `MODEL` | `claude-sonnet-4-6` | Model-ID for den valgte provider |
 | `LLM_TIMEOUT_SECONDS` | `120` | Timeout for LLM-kald |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/servitut` | Primær applikationsdatabase |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis til Celery broker/backend og health checks |
+| `CORS_ALLOW_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Komma-separeret liste eller JSON-array med tilladte frontend-origins |
+| `CORS_ALLOW_CREDENTIALS` | `true` | Aktiver credentials/cookies på CORS-responses |
 | `STORAGE_DIR` | `storage` | Rod-mappe for al data |
 | `PROMPTS_DIR` | `prompts` | Mappe med prompt-filer |
 | `MAX_CHUNK_SIZE` | `2000` | Maks tegn pr. chunk |

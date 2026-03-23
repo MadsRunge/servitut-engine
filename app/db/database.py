@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from functools import lru_cache
 
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
@@ -38,6 +39,15 @@ def initialize_database() -> None:
     """Initialiser lokale SQLite-miljøer. PostgreSQL styres via Alembic migrations."""
     if uses_sqlite():
         create_tables()
+
+
+def check_database_connection() -> tuple[bool, str | None]:
+    try:
+        with get_engine().connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
 
 
 def get_session():

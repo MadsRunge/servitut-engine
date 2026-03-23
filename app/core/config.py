@@ -1,8 +1,11 @@
-from pydantic_settings import BaseSettings
+import json
 from pathlib import Path
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "development"
     SECRET_KEY: str = "change-me-in-env"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
@@ -18,6 +21,8 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: int = 120
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/servitut"
     REDIS_URL: str = "redis://localhost:6379/0"
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    CORS_ALLOW_CREDENTIALS: bool = True
     STORAGE_DIR: str = "storage"
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000
@@ -44,6 +49,20 @@ class Settings(BaseSettings):
     @property
     def prompts_path(self) -> Path:
         return Path(self.PROMPTS_DIR)
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        raw_value = self.CORS_ALLOW_ORIGINS.strip()
+        if not raw_value:
+            return []
+
+        if raw_value.startswith("[") or raw_value.startswith("{"):
+            parsed = json.loads(raw_value)
+            if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                raise ValueError("CORS_ALLOW_ORIGINS must be a JSON string array")
+            return [origin.strip() for origin in parsed if origin.strip()]
+
+        return [origin.strip() for origin in raw_value.split(",") if origin.strip()]
 
     @property
     def tinglysning_download_path(self) -> Path:

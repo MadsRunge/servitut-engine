@@ -1,4 +1,5 @@
 from celery import Celery
+from redis import Redis
 
 from app.core.config import settings
 
@@ -18,3 +19,14 @@ celery_app.conf.update(
     timezone="Europe/Copenhagen",
     enable_utc=True,
 )
+
+
+def check_redis_connection() -> tuple[bool, str | None]:
+    client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        client.ping()
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        client.close()
