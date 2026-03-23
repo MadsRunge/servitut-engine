@@ -1,5 +1,7 @@
 from typing import List, Optional
 
+from sqlmodel import Session
+
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.document import Document
@@ -25,18 +27,21 @@ from app.services.extraction.enricher import (
 logger = get_logger(__name__)
 
 
-def _load_documents_by_id(case_id: str, doc_ids: list[str]) -> dict[str, Document]:
+def _load_documents_by_id(
+    session: Session, case_id: str, doc_ids: list[str]
+) -> dict[str, Document]:
     requested = set(doc_ids)
     if not requested:
         return {}
     return {
         doc.document_id: doc
-        for doc in storage_service.list_documents(case_id)
+        for doc in storage_service.list_documents(session, case_id)
         if doc.document_id in requested
     }
 
 
 def extract_servitutter(
+    session: Session,
     chunks: List[Chunk],
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
@@ -57,7 +62,7 @@ def extract_servitutter(
 
     # Klassificér chunks efter dokumenttype
     doc_ids = list(dict.fromkeys(c.document_id for c in chunks))
-    documents_by_id = _load_documents_by_id(case_id, doc_ids)
+    documents_by_id = _load_documents_by_id(session, case_id, doc_ids)
     doc_types: dict[str, str] = {}
     for doc_id in doc_ids:
         doc = documents_by_id.get(doc_id)
@@ -108,7 +113,7 @@ def extract_servitutter(
         )
     logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
 
-    case = matrikel_service.sync_case_matrikler(case_id, attest_by_doc.keys())
+    case = matrikel_service.sync_case_matrikler(session, case_id, attest_by_doc.keys())
     all_matrikler = [matrikel.matrikelnummer for matrikel in case.matrikler] if case else []
 
     if not akt_chunks:
@@ -137,12 +142,14 @@ def extract_servitutter(
 
 
 def extract_canonical_from_attest(
+    session: Session,
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> List[Servitut]:
     """Kører kun Pas 1: udtræk canonical liste fra tinglysningsattest."""
-    chunks = storage_service.load_all_chunks(case_id)
+    chunks = storage_service.load_all_chunks(session, case_id)
     documents_by_id = _load_documents_by_id(
+        session,
         case_id,
         list(dict.fromkeys(c.document_id for c in chunks)),
     )
@@ -165,6 +172,7 @@ def extract_canonical_from_attest(
 
 
 def score_akt_chunks_for_case(
+    session: Session,
     case_id: str,
     canonical_list: List[Servitut],
 ) -> List[dict]:
@@ -178,12 +186,12 @@ def score_akt_chunks_for_case(
     rules = get_chunk_scoring_rules()
     documents = {
         d.document_id: d
-        for d in storage_service.list_documents(case_id)
+        for d in storage_service.list_documents(session, case_id)
         if d.document_type == "akt"
     }
     results = []
     for doc_id, doc in documents.items():
-        chunks = storage_service.load_chunks(case_id, doc_id)
+        chunks = storage_service.load_chunks(session, case_id, doc_id)
         if not chunks:
             continue
         scored = score_chunks(chunks, signals)

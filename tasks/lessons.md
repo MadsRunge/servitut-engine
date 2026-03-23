@@ -7,3 +7,5 @@
 - In Streamlit, treat `unsafe_allow_html=True` as fragile: escape all dynamic values and prefer native Markdown/widgets for progress and detail views to avoid DOM/layout corruption across reruns and expanders.
 - When a user asks for a distinct pre-processing step in the workflow, give it its own Streamlit page and navigation step instead of burying it inside an adjacent page.
 - When feedback refers to the final deliverable, map it to the exact workflow stage before implementing; post-generation editing belongs after report generation, not inside review or generic feedback docs.
+- When migrating a codebase from file storage to session-based SQLModel services, finish the signature migration end-to-end in Streamlit and tests the same round; otherwise old call sites will silently preserve the broken path.
+- For database-backed tests, never bind the engine irrevocably at import time when settings are monkeypatched in tests; use a lazy engine factory plus explicit cache reset so SQLite isolation actually takes effect.

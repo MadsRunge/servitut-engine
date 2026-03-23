@@ -1,3 +1,49 @@
+## SQLModel migration plan
+
+- [x] Gennemgå eksisterende DB-migrationstilstand og afgræns hvilke dele af JSON-storage der allerede er flyttet til SQLModel
+- [x] Gør databasemodellerne konsistente med den nye PostgreSQL-arkitektur, inkl. `DATABASE_URL`, relationelle nøgler og JSON/JSONB-felter for komplekse payloads
+- [x] Færdiggør `app/services/storage_service.py`, så metadata-CRUD bruger SQLModel-sessioner i stedet for lokale JSON-filer, mens binære PDF-artefakter kan blive på disk
+- [x] Tilpas berørte services/tests nok til at bevare eksisterende API-adfærd oven på den nye storage
+- [x] Verificér migrationen med målrettede tests/checks og dokumentér resultatet
+
+## SQLModel migration review
+
+- Beholdt den påbegyndte todelte arkitektur: `app/db/models.py` er nu det relationelle SQLModel-lag med `table=True`, mens `app/models/` er gjort SQLModel-kompatible som domæne-/API-modeller, så API-laget ikke skulle rives op samtidig
+- `app/db/database.py` bruger nu lazy engine-opbygning ud fra `DATABASE_URL`, så testmiljøer kan skifte til SQLite via monkeypatch uden at appen holder fast i en gammel global engine
+- `app/db/models.py` bruger nu portable JSON-kolonner med PostgreSQL `JSONB` som variant og almindelig `JSON` som fallback, så samme storage-lag kan verificeres lokalt i SQLite og køre i PostgreSQL i drift
+- `app/models/case.py` og `app/services/storage_service.py` bærer nu `user_id` hele vejen mellem domænemodel og database, så multi-tenant filtrering kan bygges ovenpå uden endnu en storage-migration
+- `app/services/storage_service.py` er færdiggjort som session-baseret persistenslag for sager, dokumentmetadata, OCR-sider, chunks, servitutter, rapporter og TMV-jobs; kun binære PDF-/artefaktfiler forbliver på disk
+- Opdaterede Streamlit-siderne for OCR, inspektion, chunk-scoring, ekstraktion, rapportgenerering, redigering og review til konsekvent `get_session_ctx()`-brug mod SQLModel-storage
+- Opdaterede de resterende migrationstests (`matrikel`, `OCR`, `tinglysning import`, `TMV`, `report generation`, `documents`, `cases`) til SQLite-isoleret session-kørsel, så de ikke længere falder tilbage til en global Postgres-engine
+- Verificeret med `python -m py_compile ...`, målrettede regresionskørsler og til sidst `uv run pytest -q` (`122 passed`)
+
+## Security foundation plan
+
+- [x] Udvid `app/core/config.py` med `SECRET_KEY`, `ALGORITHM` og `ACCESS_TOKEN_EXPIRE_MINUTES`
+- [x] Tilføj nødvendige auth-afhængigheder til `pyproject.toml`, inkl. `passlib[bcrypt]`, `python-jose[cryptography]` og `sqlmodel`
+- [x] Implementér password hashing og JWT-hjælpere i `app/core/security.py`
+- [x] Tilføj `app/models/user.py` med en SQLModel `User` samt `UserCreate` og `UserOut`
+- [x] Verificér import/sikkerhedshelpers med målrettede tests eller runtime-checks og dokumentér resultatet
+
+## Security foundation review
+
+- Tilføjede auth-settings i `app/core/config.py` og et nyt `app/core/security.py` med bcrypt-baseret password hashing, access-token generation og token-dekodning med signatur-/expiry-validering
+- Tilføjede `app/models/user.py` med SQLModel-tabellen `User` samt `UserCreate` og `UserOut`, så API-laget kan bruge sikre input/output-skemaer uden at eksponere `hashed_password`
+- Udvidede `pyproject.toml` med `passlib[bcrypt]`, `python-jose[cryptography]`, `sqlmodel` og en eksplicit `bcrypt<4.1`-pin for at undgå den kendte `passlib`/`bcrypt` backend-inkompatibilitet i dette miljø
+- Verificeret med `python -m py_compile app/core/config.py app/core/security.py app/models/user.py tests/test_security.py` og `uv run pytest tests/test_security.py -q` (`5 passed`)
+
+## Auth + tenant isolation plan
+
+- [ ] Tilføj auth dependency i `app/api/dependencies/auth.py` med JWT-verifikation af Bearer-token og et simpelt Pydantic `User`-objekt
+- [ ] Udvid `Case`-modellen og case-oprettelse med `user_id`, så ownership gemmes på casen
+- [ ] Sikr `cases.py` og `documents.py` med `get_current_user` og send brugerens id videre til service-laget
+- [ ] Opdatér `case_service` og `storage_service`, så listing og opslag altid filtrerer på `user_id`, og fremmede cases/dokumenter ikke eksponeres
+- [ ] Tilføj målrettede API-tests for tokenkrav og multi-tenant isolation, kør verifikation og dokumentér resultatet
+
+## Auth + tenant isolation review
+
+- Afventer implementering og verifikation
+
 ## Filter chunks transparency plan
 
 - [x] Kortlæg hvilke canonical felter fra tinglysningsattesten der faktisk bruges i chunk-scoring, og hvilke der i dag er skjult i UI

@@ -7,6 +7,7 @@ from typing import Iterable
 import streamlit as st
 
 from app.core.config import settings
+from app.db.database import get_session_ctx
 from app.models.report import ReportEntry
 from app.services import case_service, matrikel_service, storage_service
 
@@ -526,7 +527,8 @@ def render_stat_cards(cards: Iterable[tuple[str, str, str]]) -> None:
         )
 
 def select_case(label: str = "Aktiv sag", key: str = "active_case_id"):
-    cases = case_service.list_cases()
+    with get_session_ctx() as session:
+        cases = case_service.list_cases(session)
     if not cases:
         render_empty_state("Ingen sager endnu", "Opret først en sag for at arbejde videre i pipeline.")
         st.stop()
@@ -559,13 +561,14 @@ def select_document(case_id: str, docs, label: str = "Dokument", key: str = "act
 
 
 def compute_case_stats(case_id: str) -> CaseStats:
-    case = storage_service.load_case(case_id)
-    docs = storage_service.list_documents(case_id)
+    with get_session_ctx() as session:
+        case = storage_service.load_case(session, case_id)
+        docs = storage_service.list_documents(session, case_id)
+        servitutter = len(storage_service.list_servitutter(session, case_id))
+        reports = len(storage_service.list_reports(session, case_id))
     pages = sum(doc.page_count for doc in docs)
     chunks = sum(doc.chunk_count for doc in docs)
     ocr_ready = sum(1 for doc in docs if doc.parse_status == "ocr_done")
-    servitutter = len(storage_service.list_servitutter(case_id))
-    reports = len(storage_service.list_reports(case_id))
     return CaseStats(
         documents=len(docs),
         ocr_ready=ocr_ready,
@@ -592,7 +595,8 @@ def render_case_banner(case) -> None:
 
 
 def select_target_matrikel(case, key: str = "target_matrikel"):
-    case = matrikel_service.sync_case_matrikler(case.case_id) or case
+    with get_session_ctx() as session:
+        case = matrikel_service.sync_case_matrikler(session, case.case_id) or case
 
     if not case.matrikler:
         st.info("Ingen matrikler fundet endnu. Kør OCR på tinglysningsattesten for at aktivere matrikelvalg.")
@@ -618,7 +622,8 @@ def select_target_matrikel(case, key: str = "target_matrikel"):
     )
     selected_value = labels[selected_label]
     if selected_value != case.target_matrikel:
-        case = case_service.update_target_matrikel(case.case_id, selected_value) or case
+        with get_session_ctx() as session:
+            case = case_service.update_target_matrikel(session, case.case_id, selected_value) or case
     return case
 
 

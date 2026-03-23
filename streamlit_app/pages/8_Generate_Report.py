@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import matrikel_service, storage_service
 from app.services.report_render_service import build_html_report, build_markdown_report
 from app.services.report_service import generate_report
@@ -86,8 +87,10 @@ if historical_mode:
 
 st.divider()
 
+with get_session_ctx() as session:
+    raw_servitutter = storage_service.list_servitutter(session, case.case_id)
 servitutter = matrikel_service.filter_servitutter_for_target(
-    storage_service.list_servitutter(case.case_id),
+    raw_servitutter,
     selected_matrikler,
     available_matrikler=[m.matrikelnummer for m in case.matrikler],
 )
@@ -121,21 +124,31 @@ if _RP_THREAD in st.session_state:
         if error:
             st.error(f"Fejl: {error}")
         else:
-            storage_service.save_report(report)
+            with get_session_ctx() as session:
+                storage_service.save_report(session, report)
             st.success(f"Rapport genereret: `{report.report_id}`")
             st.rerun()
     else:
         time.sleep(1)
         st.rerun()
 elif st.button("Generer redegørelse", type="primary"):
-    all_chunks = storage_service.load_all_chunks(case.case_id)
+    with get_session_ctx() as session:
+        all_chunks = storage_service.load_all_chunks(session, case.case_id)
 
     def _report_thread(srvs=servitutter, chunks=all_chunks, c_id=case.case_id,
                        tm=selected_matrikler, am=[m.matrikelnummer for m in case.matrikler],
                        aod=as_of_date):
         try:
-            r = generate_report(srvs, chunks, c_id,
-                                target_matrikler=tm, available_matrikler=am, as_of_date=aod)
+            with get_session_ctx() as session:
+                r = generate_report(
+                    session,
+                    srvs,
+                    chunks,
+                    c_id,
+                    target_matrikler=tm,
+                    available_matrikler=am,
+                    as_of_date=aod,
+                )
             st.session_state[_RP_RESULT] = (r, None)
         except Exception as e:
             st.session_state[_RP_RESULT] = (None, str(e))
@@ -146,7 +159,8 @@ elif st.button("Generer redegørelse", type="primary"):
     t.start()
     st.rerun()
 
-reports = storage_service.list_reports(case.case_id)
+with get_session_ctx() as session:
+    reports = storage_service.list_reports(session, case.case_id)
 reports_sorted = sorted(reports, key=lambda r: r.created_at, reverse=True)
 
 if not reports_sorted:

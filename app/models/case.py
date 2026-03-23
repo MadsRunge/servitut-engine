@@ -1,16 +1,19 @@
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from uuid import UUID
+
+from sqlmodel import Field, SQLModel
 
 
-class Matrikel(BaseModel):
+class Matrikel(SQLModel):
     matrikelnummer: str
     landsejerlav: Optional[str] = None
     areal_m2: Optional[int] = None
 
 
-class Case(BaseModel):
+class Case(SQLModel):
     case_id: str
+    user_id: Optional[UUID] = None
     name: str
     address: Optional[str] = None
     external_ref: Optional[str] = None

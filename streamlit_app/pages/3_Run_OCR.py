@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import storage_service
 from app.models.document import Document
 from app.services.ocr_service import format_pipeline_result_message, run_document_pipeline
@@ -89,10 +90,11 @@ def _build_status_snapshot(docs: list[Document]) -> dict[str, tuple[str, str]]:
 
 
 def _next_batch_document(case_id: str, pending_ids: list[str]) -> Document | None:
-    for doc_id in pending_ids:
-        doc = storage_service.load_document(case_id, doc_id, include_pages=False)
-        if doc and doc.parse_status != "ocr_done":
-            return doc
+    with get_session_ctx() as session:
+        for doc_id in pending_ids:
+            doc = storage_service.load_document(session, case_id, doc_id, include_pages=False)
+            if doc and doc.parse_status != "ocr_done":
+                return doc
     return None
 
 
@@ -104,15 +106,16 @@ def render_batch_snapshot(snapshot_ph, statuses: dict[str, tuple[str, str]]) -> 
 
 
 def run_ocr_for_document(case_id: str, doc: Document) -> tuple[bool, str]:
-    try:
-        doc.parse_status = "processing"
-        storage_service.save_document(doc)
-        result = run_document_pipeline(case_id, doc)
-        return True, format_pipeline_result_message(result)
-    except Exception as exc:
-        doc.parse_status = "error"
-        storage_service.save_document(doc)
-        return False, str(exc)
+    with get_session_ctx() as session:
+        try:
+            doc.parse_status = "processing"
+            storage_service.save_document(session, doc)
+            result = run_document_pipeline(session, case_id, doc)
+            return True, format_pipeline_result_message(result)
+        except Exception as exc:
+            doc.parse_status = "error"
+            storage_service.save_document(session, doc)
+            return False, str(exc)
 
 
 setup_page(
@@ -131,7 +134,8 @@ render_case_banner(case)
 render_case_stats(case.case_id)
 
 render_section("OCR-kø", "Kør dokumenter enkeltvis og følg, hvilke der er klar til næste trin.")
-docs = storage_service.list_documents(case.case_id)
+with get_session_ctx() as session:
+    docs = storage_service.list_documents(session, case.case_id)
 if not docs:
     render_empty_state("Ingen dokumenter", "Upload dokumenter før du starter OCR.")
     st.stop()

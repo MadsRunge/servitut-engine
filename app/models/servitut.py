@@ -1,16 +1,17 @@
 from datetime import date
 from typing import List, Optional
-from pydantic import BaseModel, Field
+
+from sqlmodel import Field, SQLModel
 
 
-class Evidence(BaseModel):
+class Evidence(SQLModel):
     chunk_id: str
     document_id: str
     page: int
     text_excerpt: str
 
 
-class Servitut(BaseModel):
+class Servitut(SQLModel):
     servitut_id: str
     case_id: str
     source_document: str

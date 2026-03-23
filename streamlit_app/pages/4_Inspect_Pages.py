@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import case_service, storage_service
 from streamlit_app.ui import (
     confidence_band,
@@ -27,7 +28,8 @@ case = select_case()
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-docs = storage_service.list_documents(case.case_id)
+with get_session_ctx() as session:
+    docs = storage_service.list_documents(session, case.case_id)
 ocr_docs = [d for d in docs if d.parse_status == "ocr_done"]
 if not ocr_docs:
     render_empty_state("Ingen OCR-klare dokumenter", "Kør OCR i trin 3, før sider kan inspiceres.")
@@ -35,7 +37,8 @@ if not ocr_docs:
 
 render_section("Dokumentvisning", "Vælg et OCR-behandlet dokument og gennemgå tekstkvaliteten.")
 doc = select_document(case.case_id, ocr_docs)
-pages = storage_service.load_ocr_pages(case.case_id, doc.document_id)
+with get_session_ctx() as session:
+    pages = storage_service.load_ocr_pages(session, case.case_id, doc.document_id)
 if not pages:
     render_empty_state("Ingen OCR-data", "Dokumentet har ingen gemte OCR-sider endnu.")
     st.stop()

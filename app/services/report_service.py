@@ -3,6 +3,8 @@ import json
 import re
 from typing import List, Optional
 
+from sqlmodel import Session
+
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
@@ -159,6 +161,7 @@ def _apply_empty_field_fallbacks(entry: ReportEntry) -> ReportEntry:
 
 
 def generate_report(
+    session: Session,
     servitutter: List[Servitut],
     all_chunks: List[Chunk],
     case_id: str,
@@ -211,7 +214,7 @@ def generate_report(
 
     attest_doc_ids = {
         d.document_id
-        for d in storage_service.list_documents(case_id)
+        for d in storage_service.list_documents(session, case_id)
         if d.document_type == "tinglysningsattest"
     }
 

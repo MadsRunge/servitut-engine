@@ -5,7 +5,9 @@ description = "PDF-baseret servitut-motor til udtræk og AI-assisteret redegøre
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
+    "bcrypt<4.1",
     "fastapi>=0.115.0",
+    "passlib[bcrypt]>=1.7.4",
     "uvicorn[standard]>=0.32.0",
     "pdfplumber>=0.11.0",
     "pymupdf>=1.24.0",
@@ -13,7 +15,10 @@ dependencies = [
     "pillow>=11.0.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
+    "python-jose[cryptography]>=3.3.0",
     "python-multipart>=0.0.12",
+    "sqlmodel>=0.0.22",
+    "psycopg2-binary>=2.9.9",
     "streamlit>=1.41.0",
     "python-dotenv>=1.0.0",
     "playwright>=1.40.0",

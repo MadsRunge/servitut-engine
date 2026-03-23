@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import storage_service
 from app.services.extraction_service import (
     describe_chunk_scoring_inputs,
@@ -227,11 +228,13 @@ render_section(
 
 canonical_key = f"canonical_list_{case_id}"
 if canonical_key not in st.session_state:
-    stored = storage_service.load_canonical_list(case_id)
+    with get_session_ctx() as session:
+        stored = storage_service.load_canonical_list(session, case_id)
     if stored is not None:
         st.session_state[canonical_key] = stored
     else:
-        saved = storage_service.list_servitutter(case_id)
+        with get_session_ctx() as session:
+            saved = storage_service.list_servitutter(session, case_id)
         attest_confirmed = [servitut for servitut in saved if servitut.attest_confirmed]
         if attest_confirmed:
             st.session_state[canonical_key] = attest_confirmed
@@ -278,7 +281,8 @@ if _CA_THREAD in st.session_state:
         if error:
             st.error(f"Fejl under attest-udtræk: {error}")
         else:
-            storage_service.save_canonical_list(case_id, result)
+            with get_session_ctx() as session:
+                storage_service.save_canonical_list(session, case_id, result)
             st.session_state[canonical_key] = result
             st.success(f"Udtræk færdigt — {len(result)} servitutter fundet i tinglysningsattesten", icon="✅")
             st.rerun()
@@ -302,7 +306,8 @@ else:
                 st.session_state[_CA_EVENTS] = events
 
             try:
-                result = extract_canonical_from_attest(case_ref, _callback)
+                with get_session_ctx() as session:
+                    result = extract_canonical_from_attest(session, case_ref, _callback)
                 st.session_state[_CA_RESULT] = (result, None)
             except Exception as exc:
                 st.session_state[_CA_RESULT] = (None, str(exc))
@@ -326,7 +331,8 @@ render_section(
 scoring_key = f"scoring_results_{case_id}"
 scoring_warning_key = f"{scoring_key}_stale_warning"
 if scoring_key not in st.session_state:
-    stored = storage_service.load_scoring_results(case_id)
+    with get_session_ctx() as session:
+        stored = storage_service.load_scoring_results(session, case_id)
     if stored is not None and _scoring_results_are_compatible(stored):
         st.session_state[scoring_key] = stored
     elif stored is not None:
@@ -356,7 +362,8 @@ if _SC_THREAD in st.session_state:
         if error:
             st.error(f"Fejl under scoring: {error}")
         else:
-            storage_service.save_scoring_results(case_id, results)
+            with get_session_ctx() as session:
+                storage_service.save_scoring_results(session, case_id, results)
             st.session_state[scoring_key] = results
             st.session_state.pop(scoring_warning_key, None)
             st.rerun()
@@ -373,7 +380,8 @@ else:
     if run_scoring:
         def _scoring_thread(case_ref=case_id, canon=canonical_list):
             try:
-                results = score_akt_chunks_for_case(case_ref, canon)
+                with get_session_ctx() as session:
+                    results = score_akt_chunks_for_case(session, case_ref, canon)
                 st.session_state[_SC_RESULT] = (results, None)
             except Exception as exc:
                 st.session_state[_SC_RESULT] = (None, str(exc))

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import streamlit as st
 
 from app.core.config import settings
+from app.db.database import get_session_ctx
 from app.services import storage_service, tmv_browser_service
 from app.services.case_service import remove_document_from_case
 from app.services.document_service import create_document_from_bytes
@@ -53,12 +54,14 @@ playwright_job_key = f"tmv_playwright_job_id_{case.case_id}"
 
 
 def _save_uploaded_file(uploaded_file, case_id: str, document_type: str) -> str:
-    doc = create_document_from_bytes(
-        file_bytes=uploaded_file.getvalue(),
-        filename=uploaded_file.name,
-        case_id=case_id,
-        document_type=document_type,
-    )
+    with get_session_ctx() as _s:
+        doc = create_document_from_bytes(
+            session=_s,
+            file_bytes=uploaded_file.getvalue(),
+            filename=uploaded_file.name,
+            case_id=case_id,
+            document_type=document_type,
+        )
     return doc.document_id
 
 
@@ -216,11 +219,13 @@ with st.expander("Manuel import (fallback uden Playwright)"):
             st.error("Klik først på 'Marker download-start', før du importerer.")
         else:
             try:
-                import_result = import_downloaded_pdfs(
-                    case.case_id,
-                    download_dir,
-                    modified_after=marked_at,
-                )
+                with get_session_ctx() as _s:
+                    import_result = import_downloaded_pdfs(
+                        _s,
+                        case.case_id,
+                        download_dir,
+                        modified_after=marked_at,
+                    )
             except (FileNotFoundError, NotADirectoryError) as exc:
                 st.error(f"Kunne ikke læse download-mappen: {exc}")
             except ValueError as exc:
@@ -250,7 +255,8 @@ render_section(
     "Upload tinglysningsattesten for ejendommen. Den bruges som autoritativ liste over hvilke servitutter der eksisterer.",
 )
 
-existing_docs = storage_service.list_documents(case.case_id)
+with get_session_ctx() as _s:
+    existing_docs = storage_service.list_documents(_s, case.case_id)
 existing_attest = [d for d in existing_docs if d.document_type == "tinglysningsattest"]
 
 if existing_attest:
@@ -291,7 +297,8 @@ if akt_files and st.button("Upload valgte akter", key="akt_btn"):
 
 # --- Dokumentbibliotek ---
 render_section("Dokumentbibliotek", "Oversigt over filer i den aktive sag og deres aktuelle pipeline-status.")
-docs = storage_service.list_documents(case.case_id)
+with get_session_ctx() as _s:
+    docs = storage_service.list_documents(_s, case.case_id)
 if docs:
     for doc in docs:
         is_attest = doc.document_type == "tinglysningsattest"
@@ -302,7 +309,8 @@ if docs:
         col3.metric("Status", parse_status_label(doc.parse_status))
         col4.metric("Sider", str(doc.page_count))
         if col5.button("🗑", key=f"del_{doc.document_id}", help="Slet dokument"):
-            remove_document_from_case(case.case_id, doc.document_id)
+            with get_session_ctx() as _s:
+                remove_document_from_case(_s, case.case_id, doc.document_id)
             st.toast(f"{doc.filename} slettet")
             st.rerun()
 else:

@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import storage_service
 from app.services.report_editor_service import report_to_editor_rows, update_report_from_editor
 from streamlit_app.ui import (
@@ -16,11 +17,12 @@ from streamlit_app.ui import (
 
 
 def _select_report(case_id: str):
-    reports = sorted(
-        storage_service.list_reports(case_id),
-        key=lambda r: r.created_at,
-        reverse=True,
-    )
+    with get_session_ctx() as session:
+        reports = sorted(
+            storage_service.list_reports(session, case_id),
+            key=lambda r: r.created_at,
+            reverse=True,
+        )
     if not reports:
         render_empty_state("Ingen rapporter", "Generér først en redegørelse, før den kan redigeres.")
         st.page_link("pages/8_Generate_Report.py", label="→ Gå til rapportgenerering", icon="📄")
@@ -149,7 +151,8 @@ save_col, nav_col = st.columns([3, 2])
 with save_col:
     if st.button("Gem ændringer", type="primary", width="stretch"):
         saved_report = update_report_from_editor(report, edited_rows, notes=notes_value)
-        storage_service.save_report(saved_report)
+        with get_session_ctx() as session:
+            storage_service.save_report(session, saved_report)
         st.toast("Rapport gemt.", icon="✅")
         st.rerun()
 with nav_col:

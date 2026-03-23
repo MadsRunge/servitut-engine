@@ -3,6 +3,9 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
+    SECRET_KEY: str = "change-me-in-env"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     LLM_PROVIDER: str = "anthropic"
     ANTHROPIC_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
@@ -13,6 +16,7 @@ class Settings(BaseSettings):
     REPORT_LLM_PROVIDER: str = ""
     REPORT_MODEL: str = ""
     LLM_TIMEOUT_SECONDS: int = 120
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/servitut"
     STORAGE_DIR: str = "storage"
     PROMPTS_DIR: str = "prompts"
     MAX_CHUNK_SIZE: int = 2000

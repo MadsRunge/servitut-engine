@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from sqlmodel import SQLModel
 
 
-class Chunk(BaseModel):
+class Chunk(SQLModel):
     chunk_id: str
     document_id: str
     case_id: str

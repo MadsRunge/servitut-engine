@@ -4,10 +4,28 @@ from datetime import date
 import pytest
 
 from app.core.config import settings
+from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.chunk import Chunk
 from app.models.report import Report, ReportEntry
 from app.models.servitut import Evidence, Servitut
 from app.services.report_service import generate_report
+
+
+@pytest.fixture(autouse=True)
+def db_env(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
+    (tmp_path / "cases").mkdir()
+    reset_engine_cache()
+    create_tables()
+    yield tmp_path
+    reset_engine_cache()
+
+
+def call_generate_report(servitutter, chunks, case_id="case-test", **kwargs):
+    with get_session_ctx() as session:
+        return generate_report(session, servitutter, chunks, case_id, **kwargs)
 
 
 def make_mock_servitut(i: int) -> Servitut:
@@ -75,7 +93,7 @@ def test_report_fallback_on_api_error():
 
     with patch("app.services.report_service.generate_text") as mock_generate_text:
         mock_generate_text.side_effect = Exception("API unavailable")
-        report = generate_report(servitutter, chunks, "case-test")
+        report = call_generate_report(servitutter, chunks, "case-test")
 
     assert isinstance(report, Report)
     assert report.case_id == "case-test"
@@ -90,7 +108,7 @@ def test_report_with_mock_api_response():
     chunks = make_mock_chunks()
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE):
-        report = generate_report(servitutter, chunks, "case-test")
+        report = call_generate_report(servitutter, chunks, "case-test")
 
     assert isinstance(report, Report)
     assert len(report.servitutter) == 1
@@ -109,7 +127,7 @@ def test_report_uses_deepseek_reasoner_by_default(monkeypatch):
     monkeypatch.setattr(settings, "REPORT_MODEL", "")
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
-        generate_report(servitutter, chunks, "case-test")
+        call_generate_report(servitutter, chunks, "case-test")
 
     _, kwargs = mock_generate_text.call_args
     assert kwargs["provider"] is None
@@ -124,7 +142,7 @@ def test_report_uses_explicit_report_model_override(monkeypatch):
     monkeypatch.setattr(settings, "REPORT_MODEL", "deepseek-chat")
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
-        generate_report(servitutter, chunks, "case-test")
+        call_generate_report(servitutter, chunks, "case-test")
 
     _, kwargs = mock_generate_text.call_args
     assert kwargs["provider"] is None
@@ -140,7 +158,7 @@ def test_report_can_use_separate_provider_and_model(monkeypatch):
     monkeypatch.setattr(settings, "REPORT_MODEL", "deepseek-reasoner")
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
-        generate_report(servitutter, chunks, "case-test")
+        call_generate_report(servitutter, chunks, "case-test")
 
     _, kwargs = mock_generate_text.call_args
     assert kwargs["provider"] == "deepseek"
@@ -153,7 +171,7 @@ def test_report_accepts_json_wrapped_in_code_fence():
     wrapped_response = f"```json\n{MOCK_API_RESPONSE}\n```"
 
     with patch("app.services.report_service.generate_text", return_value=wrapped_response):
-        report = generate_report(servitutter, chunks, "case-test")
+        report = call_generate_report(servitutter, chunks, "case-test")
 
     assert len(report.servitutter) == 1
     assert report.notes == "Alt ser ud til at være i orden."
@@ -169,7 +187,7 @@ def test_report_includes_all_servitutter_with_scope_annotation():
     other.applies_to_matrikler = ["0518p"]
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
-        generate_report(
+        call_generate_report(
             [included, other],
             make_mock_chunks(),
             "case-test",
@@ -192,7 +210,7 @@ def test_report_filters_future_servitutter_when_as_of_date_is_set():
     future.registered_at = date(2024, 1, 16)
 
     with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
-        report = generate_report(
+        report = call_generate_report(
             [historical, future],
             make_mock_chunks(),
             "case-test",
@@ -235,7 +253,7 @@ def test_sort_oldest_first():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv1, srv2, srv3], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv1, srv2, srv3], make_mock_chunks(), "case-test")
 
     assert report.servitutter[0].date_reference.startswith("03.02.1957")
     assert report.servitutter[1].date_reference.startswith("22.11.1970")
@@ -251,7 +269,7 @@ def test_dedup_removes_duplicate_date_reference():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv1, srv2], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv1, srv2], make_mock_chunks(), "case-test")
 
     assert len(report.servitutter) == 1
 
@@ -264,7 +282,7 @@ def test_empty_description_no_raw_text():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
     assert report.servitutter[0].description == "Akt ikke gennemgået."
 
@@ -276,7 +294,7 @@ def test_empty_action_fallback():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
     assert report.servitutter[0].action == "Kræver opslag i tingbogsakt"
 
@@ -288,7 +306,7 @@ def test_amt_warning_set():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
     assert report.servitutter[0].beneficiary_amt_warning is True
 
@@ -300,7 +318,7 @@ def test_amt_warning_not_set():
 
     with patch("app.services.report_service.generate_text") as mock_generate:
         mock_generate.side_effect = Exception("Force fallback")
-        report = generate_report([srv], make_mock_chunks(), "case-test")
+        report = call_generate_report([srv], make_mock_chunks(), "case-test")
 
     assert report.servitutter[0].beneficiary_amt_warning is False
 

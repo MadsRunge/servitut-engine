@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services.case_service import create_case
 from streamlit_app.ui import render_section, setup_page
 
@@ -26,7 +27,8 @@ if submitted:
     if not name:
         st.error("Sagsnavn er påkrævet.")
     else:
-        case = create_case(name, address or None, external_ref or None)
+        with get_session_ctx() as _s:
+            case = create_case(_s, name, address or None, external_ref or None)
         st.success(f"Sag oprettet: **{case.name}** (`{case.case_id}`)")
         col1, col2 = st.columns(2)
         col1.metric("Status", case.status)

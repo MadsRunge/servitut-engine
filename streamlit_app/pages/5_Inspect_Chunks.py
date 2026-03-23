@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import case_service, storage_service
 from app.utils.text import has_servitut_keywords
 from streamlit_app.ui import (
@@ -27,14 +28,16 @@ case = select_case()
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-docs = storage_service.list_documents(case.case_id)
+with get_session_ctx() as session:
+    docs = storage_service.list_documents(session, case.case_id)
 if not docs:
     render_empty_state("Ingen dokumenter", "Upload dokumenter og kør OCR før chunk-inspektion.")
     st.stop()
 
 render_section("Dokument og filtrering", "Brug sidefilter til hurtig kontrol af enkelte sider.")
 doc = select_document(case.case_id, docs)
-chunks = storage_service.load_chunks(case.case_id, doc.document_id)
+with get_session_ctx() as session:
+    chunks = storage_service.load_chunks(session, case.case_id, doc.document_id)
 if not chunks:
     render_empty_state("Ingen chunks endnu", "Kør OCR for dokumentet først.")
     st.stop()

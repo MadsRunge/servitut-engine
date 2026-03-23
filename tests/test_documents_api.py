@@ -1,9 +1,11 @@
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.main import app
 from app.core.config import settings
+from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.services import storage_service
@@ -14,11 +16,21 @@ from app.services.ocr_service import OcrPipelineResult
 client = TestClient(app)
 
 
-def test_upload_document_accepts_explicit_document_type(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def db_env(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
     (tmp_path / "cases").mkdir()
+    reset_engine_cache()
+    create_tables()
+    yield tmp_path
+    reset_engine_cache()
 
-    case = create_case("API upload")
+
+def test_upload_document_accepts_explicit_document_type(tmp_path, monkeypatch):
+    with get_session_ctx() as session:
+        case = create_case(session, "API upload")
 
     response = client.post(
         f"/cases/{case.case_id}/documents",
@@ -32,10 +44,8 @@ def test_upload_document_accepts_explicit_document_type(tmp_path, monkeypatch):
 
 
 def test_upload_document_infers_tinglysningsattest_from_filename(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
-    (tmp_path / "cases").mkdir()
-
-    case = create_case("API upload infer")
+    with get_session_ctx() as session:
+        case = create_case(session, "API upload infer")
 
     response = client.post(
         f"/cases/{case.case_id}/documents",
@@ -48,24 +58,22 @@ def test_upload_document_infers_tinglysningsattest_from_filename(tmp_path, monke
 
 
 def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
-    (tmp_path / "cases").mkdir()
+    with get_session_ctx() as session:
+        case = create_case(session, "API OCR")
+        doc_id = "doc-test"
+        pdf_path = storage_service.get_document_pdf_path(case.case_id, doc_id)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
 
-    case = create_case("API OCR")
-    doc_id = "doc-test"
-    pdf_path = storage_service.get_document_pdf_path(case.case_id, doc_id)
-    pdf_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf_path.write_bytes(b"%PDF-1.4 fake")
-
-    doc = Document(
-        document_id=doc_id,
-        case_id=case.case_id,
-        filename="akt.pdf",
-        file_path=str(pdf_path),
-        document_type="akt",
-    )
-    storage_service.save_document(doc)
-    add_document_to_case(case.case_id, doc_id)
+        doc = Document(
+            document_id=doc_id,
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path=str(pdf_path),
+            document_type="akt",
+        )
+        storage_service.save_document(session, doc)
+        add_document_to_case(session, case.case_id, doc_id)
 
     pages = [PageData(page_number=1, text="OCR tekst", confidence=0.9)]
     chunks = [
@@ -81,7 +89,7 @@ def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
         )
     ]
 
-    def fake_pipeline(case_id: str, pipeline_doc: Document):
+    def fake_pipeline(session, case_id: str, pipeline_doc: Document):
         pipeline_doc.pages = pages
         pipeline_doc.page_count = 1
         pipeline_doc.chunk_count = 1
@@ -89,7 +97,7 @@ def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
         pipeline_doc.ocr_low_conf_pages = 0
         pipeline_doc.document_type = "akt"
         pipeline_doc.parse_status = "ocr_done"
-        storage_service.save_document(pipeline_doc)
+        storage_service.save_document(session, pipeline_doc)
         return OcrPipelineResult(
             pages=pages,
             chunks=chunks,

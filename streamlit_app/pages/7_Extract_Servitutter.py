@@ -15,6 +15,7 @@ def _md(value: object) -> str:
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import storage_service
 from app.services.extraction_service import extract_servitutter
 from streamlit_app.ui import (
@@ -37,13 +38,15 @@ case = select_case()
 render_case_banner(case)
 render_case_stats(case.case_id)
 
-all_chunks = storage_service.load_all_chunks(case.case_id)
-documents = storage_service.list_documents(case.case_id)
+with get_session_ctx() as session:
+    all_chunks = storage_service.load_all_chunks(session, case.case_id)
+    documents = storage_service.list_documents(session, case.case_id)
 doc_name: dict[str, str] = {d.document_id: d.filename for d in documents}
 
 # --- Load cached canonical og scoring ---
-cached_canonical = storage_service.load_canonical_list(case.case_id)
-scoring_results = storage_service.load_scoring_results(case.case_id)
+with get_session_ctx() as session:
+    cached_canonical = storage_service.load_canonical_list(session, case.case_id)
+    scoring_results = storage_service.load_scoring_results(session, case.case_id)
 
 # --- Klargøringsstatus ---
 render_section("Klar til udtræk", "Pipeline-oversigt inden LLM-kørsel.")
@@ -130,8 +133,9 @@ if _EX_THREAD in st.session_state:
         if error:
             st.error(f"Fejl under udtræk: {error}")
         else:
-            for srv in result:
-                storage_service.save_servitut(srv)
+            with get_session_ctx() as session:
+                for srv in result:
+                    storage_service.save_servitut(session, srv)
             st.success(f"Udtræk færdigt — {len(result)} servitutter fundet", icon="✅")
             st.rerun()
     else:
@@ -153,7 +157,14 @@ elif st.button("Kør udtræk", type="primary", disabled=not all_chunks):
             events.append(event)
             st.session_state[_EX_EVENTS] = events
         try:
-            result = extract_servitutter(chunks, c_id, progress_callback=_cb, cached_canonical=canonical)
+            with get_session_ctx() as session:
+                result = extract_servitutter(
+                    session,
+                    chunks,
+                    c_id,
+                    progress_callback=_cb,
+                    cached_canonical=canonical,
+                )
             st.session_state[_EX_RESULT] = (result, None)
         except Exception as e:
             st.session_state[_EX_RESULT] = (None, str(e))
@@ -171,7 +182,8 @@ render_section(
     "Gennemgå alle udtrukne servitutter for ejendommen inden rapportgenerering.",
 )
 
-servitutter = storage_service.list_servitutter(case.case_id)
+with get_session_ctx() as session:
+    servitutter = storage_service.list_servitutter(session, case.case_id)
 
 if not servitutter:
     render_empty_state("Ingen servitutter endnu", "Kør udtræk, når chunks er klar.")

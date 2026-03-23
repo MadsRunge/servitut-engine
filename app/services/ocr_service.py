@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+from sqlmodel import Session
+
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.chunk import Chunk
@@ -236,6 +238,7 @@ def _artifact_is_fresh(artifact_path: Path, dependency_paths: list[Path]) -> boo
 
 
 def _load_or_create_pages(
+    session: Session,
     case_id: str,
     doc_id: str,
     pdf_path: Path,
@@ -255,40 +258,43 @@ def _load_or_create_pages(
 
     if reused_pages:
         logger.info("Genbruger eksisterende OCR-sider for %s", doc_id)
-        pages = storage_service.load_ocr_pages(case_id, doc_id)
+        pages = storage_service.load_ocr_pages(session, case_id, doc_id)
     else:
         pages = extract_pages_from_ocr_pdf(ocr_pdf_path)
-        storage_service.save_ocr_pages(case_id, doc_id, pages)
+        storage_service.save_ocr_pages(session, case_id, doc_id, pages)
 
     return pages, reused_ocr_pdf, reused_pages
 
 
 def _load_or_create_chunks(
+    session: Session,
     case_id: str,
     doc_id: str,
     pages: List[PageData],
     force: bool = False,
 ) -> tuple[List[Chunk], bool]:
-    pages_path = storage_service.get_ocr_path(case_id, doc_id)
-    chunks_path = storage_service.get_chunks_path(case_id, doc_id)
-    reused_chunks = not force and _artifact_is_fresh(chunks_path, [pages_path])
-
-    if reused_chunks:
-        logger.info("Genbruger eksisterende chunks for %s", doc_id)
-        return storage_service.load_chunks(case_id, doc_id), True
+    # Chunks gemmes nu i DB; tjek eksistens via DB i stedet for disk-mtime
+    if not force:
+        existing = storage_service.load_chunks(session, case_id, doc_id)
+        if existing:
+            logger.info("Genbruger eksisterende chunks for %s", doc_id)
+            return existing, True
 
     chunks = chunk_pages(pages, doc_id, case_id)
-    storage_service.save_chunks(case_id, doc_id, chunks)
+    storage_service.save_chunks(session, case_id, doc_id, chunks)
     return chunks, False
 
 
-def run_document_pipeline(case_id: str, doc: Document, force: bool = False) -> OcrPipelineResult:
+def run_document_pipeline(
+    session: Session, case_id: str, doc: Document, force: bool = False
+) -> OcrPipelineResult:
     pdf_path = Path(doc.file_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF-fil ikke fundet på disk: {pdf_path}")
 
     ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc.document_id)
     pages, reused_ocr_pdf, reused_pages = _load_or_create_pages(
+        session=session,
         case_id=case_id,
         doc_id=doc.document_id,
         pdf_path=pdf_path,
@@ -296,6 +302,7 @@ def run_document_pipeline(case_id: str, doc: Document, force: bool = False) -> O
         force=force,
     )
     chunks, reused_chunks = _load_or_create_chunks(
+        session=session,
         case_id=case_id,
         doc_id=doc.document_id,
         pages=pages,
@@ -314,7 +321,7 @@ def run_document_pipeline(case_id: str, doc: Document, force: bool = False) -> O
         requested_type=_preserve_known_document_type(doc.document_type),
     )
     doc.parse_status = "ocr_done"
-    storage_service.save_document(doc)
+    storage_service.save_document(session, doc)
 
     return OcrPipelineResult(
         pages=pages,

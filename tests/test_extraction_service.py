@@ -116,13 +116,25 @@ def test_extract_from_doc_chunks_respects_concurrency_limit(monkeypatch):
 def test_extract_servitutter_preserves_input_document_order(monkeypatch):
     monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 4)
 
-    def fake_load_document(case_id: str, doc_id: str):
-        class FakeDocument:
-            document_type = "akt"
-
-        return FakeDocument()
-
-    monkeypatch.setattr("app.services.extraction_service.storage_service.load_document", fake_load_document)
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-z",
+                case_id=case_id,
+                filename="doc-z.pdf",
+                file_path="storage/cases/case-test/documents/doc-z/original.pdf",
+                document_type="akt",
+            ),
+            Document(
+                document_id="doc-a",
+                case_id=case_id,
+                filename="doc-a.pdf",
+                file_path="storage/cases/case-test/documents/doc-a/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
     monkeypatch.setattr(
         extraction_service,
         "_dedup_akt_servitutter",
@@ -136,6 +148,7 @@ def test_extract_servitutter_preserves_input_document_order(monkeypatch):
         ],
     ):
         result = extraction_service.extract_servitutter(
+            None,
             [
                 make_chunk("doc-z"),
                 make_chunk("doc-a"),
@@ -324,22 +337,22 @@ def test_extract_canonical_from_attest_preloads_documents(monkeypatch):
 
     monkeypatch.setattr(
         "app.services.extraction_service.storage_service.load_all_chunks",
-        lambda case_id: chunks,
+        lambda session, case_id: chunks,
     )
     monkeypatch.setattr(
         "app.services.extraction_service.storage_service.list_documents",
-        lambda case_id: documents,
+        lambda session, case_id: documents,
     )
     monkeypatch.setattr(
         "app.services.extraction_service.storage_service.load_document",
-        lambda case_id, doc_id: (_ for _ in ()).throw(AssertionError("N+1 load_document call")),
+        lambda session, case_id, doc_id: (_ for _ in ()).throw(AssertionError("N+1 load_document call")),
     )
 
     with patch(
         "app.services.extraction_service._extract_from_doc_chunks",
         return_value=[make_canonical("01.01.2000-1-1")],
     ) as mock_extract:
-        result = extraction_service.extract_canonical_from_attest("case-test")
+        result = extraction_service.extract_canonical_from_attest(None, "case-test")
 
     assert len(result) == 1
     attest_by_doc = mock_extract.call_args.args[0]
@@ -496,15 +509,15 @@ def test_score_akt_chunks_for_case_includes_scoreless_context_chunks(monkeypatch
     monkeypatch.setattr(
         extraction_service.storage_service,
         "list_documents",
-        lambda case_id: [document],
+        lambda session, case_id: [document],
     )
     monkeypatch.setattr(
         extraction_service.storage_service,
         "load_chunks",
-        lambda case_id, doc_id: chunks,
+        lambda session, case_id, doc_id: chunks,
     )
 
-    results = extraction_service.score_akt_chunks_for_case("case-test", [canonical])
+    results = extraction_service.score_akt_chunks_for_case(None, "case-test", [canonical])
 
     assert len(results) == 1
     result = results[0]

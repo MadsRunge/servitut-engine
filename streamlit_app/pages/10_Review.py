@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services import case_service, matrikel_service, storage_service
 from streamlit_app.ui import (
     render_case_banner,
@@ -28,10 +29,11 @@ render_case_banner(case)
 render_case_stats(case.case_id)
 
 
-servitutter = matrikel_service.filter_servitutter_for_target(
-    storage_service.list_servitutter(case.case_id),
-    [case.target_matrikel] if case.target_matrikel else [],
-)
+with get_session_ctx() as session:
+    servitutter = matrikel_service.filter_servitutter_for_target(
+        storage_service.list_servitutter(session, case.case_id),
+        [case.target_matrikel] if case.target_matrikel else [],
+    )
 if not servitutter:
     render_empty_state("Ingen servitutter", "Kør ekstraktion, før review og sporbarhed giver mening.")
     st.stop()
@@ -43,7 +45,8 @@ srv_options = {
 selected_srv_label = st.selectbox("Vælg servitut", list(srv_options.keys()))
 srv_id = srv_options[selected_srv_label]
 
-srv = storage_service.load_servitut(case.case_id, srv_id)
+with get_session_ctx() as session:
+    srv = storage_service.load_servitut(session, case.case_id, srv_id)
 if not srv:
     st.error("Servitut ikke fundet.")
     st.stop()
@@ -97,13 +100,15 @@ if srv.evidence:
         with st.expander(f"Side {ev.page} | Chunk `{ev.chunk_id}`"):
             st.code(ev.text_excerpt, language="text")
 
-            full_chunks = storage_service.load_chunks(case.case_id, ev.document_id)
+            with get_session_ctx() as session:
+                full_chunks = storage_service.load_chunks(session, case.case_id, ev.document_id)
             full_chunk = next((c for c in full_chunks if c.chunk_id == ev.chunk_id), None)
             if full_chunk:
                 st.markdown("**Fuld chunk-tekst:**")
                 st.code(full_chunk.text, language="text")
 
-            pages = storage_service.load_ocr_pages(case.case_id, ev.document_id)
+            with get_session_ctx() as session:
+                pages = storage_service.load_ocr_pages(session, case.case_id, ev.document_id)
             page = next((p for p in pages if p.page_number == ev.page), None)
             if page:
                 st.markdown(f"**OCR-tekst side {page.page_number}** (conf={page.confidence:.2f}):")

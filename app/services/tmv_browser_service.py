@@ -25,6 +25,7 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.database import get_session_ctx
 from app.models.tmv_job import ACTIVE_STATUSES, TmvJob
 from app.services import storage_service
 from app.services.tinglysning_import_service import import_downloaded_pdfs
@@ -60,24 +61,25 @@ _SELECTORS = {
 # ---------------------------------------------------------------------------
 
 def start_job(case_id: str, address: str | None, *, headless: bool = False) -> TmvJob:
-    """Opretter et TmvJob, gemmer det på disk og starter Playwright i en thread."""
-    if storage_service.load_case(case_id) is None:
-        raise ValueError(f"Sag ikke fundet: {case_id}")
+    """Opretter et TmvJob, gemmer det i DB og starter Playwright i en thread."""
+    with get_session_ctx() as session:
+        if storage_service.load_case(session, case_id) is None:
+            raise ValueError(f"Sag ikke fundet: {case_id}")
 
-    download_dir = str(
-        Path(settings.TMV_JOB_DOWNLOAD_DIR).expanduser()
-        / case_id
-        / str(uuid4())[:8]
-    )
-    job = TmvJob(
-        job_id=str(uuid4()),
-        case_id=case_id,
-        status="pending",
-        started_at=datetime.now(timezone.utc),
-        address=address,
-        download_dir=download_dir,
-    )
-    storage_service.save_tmv_job(job)
+        download_dir = str(
+            Path(settings.TMV_JOB_DOWNLOAD_DIR).expanduser()
+            / case_id
+            / str(uuid4())[:8]
+        )
+        job = TmvJob(
+            job_id=str(uuid4()),
+            case_id=case_id,
+            status="pending",
+            started_at=datetime.now(timezone.utc),
+            address=address,
+            download_dir=download_dir,
+        )
+        storage_service.save_tmv_job(session, job)
 
     thread = threading.Thread(
         target=_run_job,
@@ -90,33 +92,37 @@ def start_job(case_id: str, address: str | None, *, headless: bool = False) -> T
 
 
 def get_job(case_id: str, job_id: str) -> TmvJob | None:
-    return storage_service.load_tmv_job(case_id, job_id)
+    with get_session_ctx() as session:
+        return storage_service.load_tmv_job(session, case_id, job_id)
 
 
 def latest_active_job(case_id: str) -> TmvJob | None:
-    for job in storage_service.list_tmv_jobs(case_id):
-        if job.status in ACTIVE_STATUSES:
-            return job
+    with get_session_ctx() as session:
+        for job in storage_service.list_tmv_jobs(session, case_id):
+            if job.status in ACTIVE_STATUSES:
+                return job
     return None
 
 
 def cancel_job(case_id: str, job_id: str) -> TmvJob:
-    job = storage_service.load_tmv_job(case_id, job_id)
-    if job is None:
-        raise ValueError(f"Job ikke fundet: {job_id}")
-    job.status = "cancelled"
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        job = storage_service.load_tmv_job(session, case_id, job_id)
+        if job is None:
+            raise ValueError(f"Job ikke fundet: {job_id}")
+        job.status = "cancelled"
+        storage_service.save_tmv_job(session, job)
     return job
 
 
 def signal_ready(case_id: str, job_id: str) -> TmvJob:
     """Manuel fallback: sæt user_ready=True når brugeren er navigeret til ejendommen."""
-    job = storage_service.load_tmv_job(case_id, job_id)
-    if job is None:
-        raise ValueError(f"Job ikke fundet: {job_id}")
-    job.user_ready = True
-    job.status_detail = None
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        job = storage_service.load_tmv_job(session, case_id, job_id)
+        if job is None:
+            raise ValueError(f"Job ikke fundet: {job_id}")
+        job.user_ready = True
+        job.status_detail = None
+        storage_service.save_tmv_job(session, job)
     return job
 
 
@@ -129,18 +135,21 @@ def _update(job: TmvJob, status: str, **kwargs) -> TmvJob:
     job.last_heartbeat_at = datetime.now(timezone.utc)
     for k, v in kwargs.items():
         setattr(job, k, v)
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, job)
     logger.info(f"TMV job {job.job_id[:8]}: {status}")
     return job
 
 
 def _is_cancelled(job: TmvJob) -> bool:
-    current = storage_service.load_tmv_job(job.case_id, job.job_id)
+    with get_session_ctx() as session:
+        current = storage_service.load_tmv_job(session, job.case_id, job.job_id)
     return current is not None and current.status == "cancelled"
 
 
 def _is_user_ready(job: TmvJob) -> bool:
-    current = storage_service.load_tmv_job(job.case_id, job.job_id)
+    with get_session_ctx() as session:
+        current = storage_service.load_tmv_job(session, job.case_id, job.job_id)
     return current is not None and current.user_ready
 
 
@@ -156,7 +165,8 @@ def _run_job(job: TmvJob, headless: bool) -> None:
         job.status = "failed"
         job.error_message = str(exc)
         job.last_heartbeat_at = datetime.now(timezone.utc)
-        storage_service.save_tmv_job(job)
+        with get_session_ctx() as _s:
+            storage_service.save_tmv_job(_s, job)
 
 
 def _execute(job: TmvJob, headless: bool) -> None:
@@ -191,7 +201,6 @@ def _execute(job: TmvJob, headless: bool) -> None:
                 page.close(); browser.close(); return
 
             job.last_heartbeat_at = datetime.now(timezone.utc)
-            storage_service.save_tmv_job(job)
 
             try:
                 on_foresporgsel = _SELECTORS["post_login_url"] in page.url
@@ -200,6 +209,8 @@ def _execute(job: TmvJob, headless: bool) -> None:
                     break
             except Exception:
                 pass
+            with get_session_ctx() as _s:
+                storage_service.save_tmv_job(_s, job)
             time.sleep(2)
         else:
             raise TimeoutError(f"Login-timeout efter {_LOGIN_TIMEOUT_SECONDS}s")
@@ -297,7 +308,8 @@ def _execute(job: TmvJob, headless: bool) -> None:
                 downloaded_paths.append(dest)
                 job.last_heartbeat_at = datetime.now(timezone.utc)
                 job.downloaded_files = [str(p) for p in downloaded_paths]
-                storage_service.save_tmv_job(job)
+                with get_session_ctx() as _s:
+                    storage_service.save_tmv_job(_s, job)
                 page.wait_for_timeout(1000)
             except Exception as exc:
                 logger.warning(f"TMV job {job.job_id[:8]}: download fejlede for '{text}': {exc}")
@@ -311,7 +323,8 @@ def _execute(job: TmvJob, headless: bool) -> None:
     _update(job, "importing_documents", downloaded_files=[str(p) for p in downloaded_paths])
 
     if downloaded_paths:
-        result = import_downloaded_pdfs(job.case_id, download_dir)
+        with get_session_ctx() as _s:
+            result = import_downloaded_pdfs(_s, job.case_id, download_dir)
         summary = (
             f"Importerede {len(result.imported)} · "
             f"Sprang over {len(result.skipped_existing_duplicates) + len(result.skipped_batch_duplicates)} dubletter"
@@ -374,6 +387,7 @@ def _wait_for_user_ready(job: TmvJob, page) -> None:
             logger.info(f"TMV job {job.job_id[:8]}: manuel signal modtaget")
             return
         job.last_heartbeat_at = datetime.now(timezone.utc)
-        storage_service.save_tmv_job(job)
+        with get_session_ctx() as _s:
+            storage_service.save_tmv_job(_s, job)
         time.sleep(2)
     raise TimeoutError(f"Timeout efter {_USER_READY_TIMEOUT_SECONDS}s — ingen bruger-signal.")

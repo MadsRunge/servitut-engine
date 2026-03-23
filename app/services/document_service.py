@@ -1,9 +1,12 @@
+from sqlmodel import Session
+
 from app.models.document import Document
-from app.services import case_service, storage_service
+from app.services import storage_service
 from app.utils.ids import generate_doc_id
 
 
 def create_document_from_bytes(
+    session: Session,
     case_id: str,
     filename: str,
     file_bytes: bytes,
@@ -24,6 +27,5 @@ def create_document_from_bytes(
         document_type=document_type,
         parse_status=parse_status,
     )
-    storage_service.save_document(doc)
-    case_service.add_document_to_case(case_id, doc_id)
+    storage_service.save_document(session, doc)
     return doc

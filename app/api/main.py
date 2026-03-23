@@ -1,15 +1,26 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import cases, documents, extraction, ocr, reports
 from app.core.logging import setup_logging
+from app.db.database import create_tables
 
 setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    yield
+
 
 app = FastAPI(
     title="Servitut Engine API",
     description="API til udtræk og redegørelse af servitutter fra PDF-dokumenter",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

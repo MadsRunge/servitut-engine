@@ -1,16 +1,17 @@
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+
+from sqlmodel import Field, SQLModel
 
 
-class PageData(BaseModel):
+class PageData(SQLModel):
     page_number: int
     text: str
     extraction_method: str = "ocrmypdf"
     confidence: float = 0.9
 
 
-class Document(BaseModel):
+class Document(SQLModel):
     document_id: str
     case_id: str
     filename: str

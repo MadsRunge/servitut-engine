@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
+from app.db.database import get_session_ctx
 from app.services.case_service import delete_case, list_cases
 from streamlit_app.ui import (
     compute_case_stats,
@@ -21,7 +22,8 @@ setup_page(
     step="home",
 )
 
-cases = list_cases()
+with get_session_ctx() as _session:
+    cases = list_cases(_session)
 
 if not cases:
     render_empty_state(
@@ -85,7 +87,8 @@ else:
                 )
                 col_yes, col_no, _ = st.columns([1, 1, 4])
                 if col_yes.button("Ja, slet alt data", key=f"delete_yes_{case.case_id}", type="primary"):
-                    delete_case(case.case_id)
+                    with get_session_ctx() as _s:
+                        delete_case(_s, case.case_id)
                     st.session_state.pop(confirm_key, None)
                     st.rerun()
                 if col_no.button("Annuller", key=f"delete_no_{case.case_id}"):

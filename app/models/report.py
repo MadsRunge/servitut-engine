@@ -1,9 +1,10 @@
 from datetime import date, datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+
+from sqlmodel import Field, SQLModel
 
 
-class ReportEntry(BaseModel):
+class ReportEntry(SQLModel):
     nr: int
     date_reference: Optional[str] = None
     raw_text: Optional[str] = None  # Verbatim tekst fra akten
@@ -21,7 +22,7 @@ class ReportEntry(BaseModel):
     servitut_id: str
 
 
-class Report(BaseModel):
+class Report(SQLModel):
     report_id: str
     case_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)

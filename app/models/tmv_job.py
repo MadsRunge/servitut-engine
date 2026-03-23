@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+
+from sqlmodel import Field, SQLModel
 
 
-class TmvJob(BaseModel):
+class TmvJob(SQLModel):
     job_id: str
     case_id: str
     status: str  # se gyldige statusser nedenfor

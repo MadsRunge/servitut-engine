@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlmodel import Session
+
 from app.models.document import Document
 from app.services import case_service, storage_service
 from app.services.document_classifier import classify_document
@@ -21,12 +23,13 @@ class DownloadImportResult:
 
 
 def import_downloaded_pdfs(
+    session: Session,
     case_id: str,
     source_dir: str | Path,
     *,
     modified_after: datetime | None = None,
 ) -> DownloadImportResult:
-    if not case_service.get_case(case_id):
+    if not case_service.get_case(session, case_id):
         raise ValueError(f"Case not found: {case_id}")
 
     source_path = Path(source_dir).expanduser()
@@ -35,7 +38,7 @@ def import_downloaded_pdfs(
     if not source_path.is_dir():
         raise NotADirectoryError(source_path)
 
-    existing_hashes = _load_existing_hashes(case_id)
+    existing_hashes = _load_existing_hashes(session, case_id)
     imported_hashes: set[str] = set()
     result = DownloadImportResult()
 
@@ -57,6 +60,7 @@ def import_downloaded_pdfs(
             continue
 
         doc = create_document_from_bytes(
+            session=session,
             case_id=case_id,
             filename=pdf_path.name,
             file_bytes=pdf_path.read_bytes(),
@@ -68,9 +72,9 @@ def import_downloaded_pdfs(
     return result
 
 
-def _load_existing_hashes(case_id: str) -> set[str]:
+def _load_existing_hashes(session: Session, case_id: str) -> set[str]:
     hashes: set[str] = set()
-    for doc in storage_service.list_documents(case_id):
+    for doc in storage_service.list_documents(session, case_id):
         pdf_path = storage_service.get_document_pdf_path(case_id, doc.document_id)
         if pdf_path.exists():
             hashes.add(_hash_file(pdf_path))

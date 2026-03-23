@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.core.config import settings
+from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.case import Case
 from app.models.tmv_job import ACTIVE_STATUSES, TERMINAL_STATUSES, TmvJob
 
@@ -21,14 +23,17 @@ from app.models.tmv_job import ACTIVE_STATUSES, TERMINAL_STATUSES, TmvJob
 @pytest.fixture()
 def mock_case(tmp_path, monkeypatch):
     """Opret en minimal testsag i tmp_path-storage."""
-    from app.core.config import settings
     monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setattr(settings, "TMV_JOB_DOWNLOAD_DIR", str(tmp_path / "tmv-downloads"))
+    (tmp_path / "cases").mkdir()
+    reset_engine_cache()
+    create_tables()
 
-    from app.services import storage_service
     from app.services.case_service import create_case
 
-    case = create_case("Test Sag", address="Testvej 1, 2100 København Ø")
+    with get_session_ctx() as session:
+        case = create_case(session, "Test Sag", address="Testvej 1, 2100 København Ø")
     return case
 
 
@@ -55,15 +60,19 @@ def test_start_job_creates_job_on_disk(mock_case, monkeypatch):
     assert job.address == "Testvej 1"
 
     # Job skal kunne læses fra disk
-    loaded = storage_service.load_tmv_job(mock_case.case_id, job.job_id)
+    with get_session_ctx() as session:
+        loaded = storage_service.load_tmv_job(session, mock_case.case_id, job.job_id)
     assert loaded is not None
     assert loaded.job_id == job.job_id
     assert loaded.status == "pending"
 
 
 def test_start_job_raises_for_unknown_case(tmp_path, monkeypatch):
-    from app.core.config import settings
     monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
+    (tmp_path / "cases").mkdir()
+    reset_engine_cache()
+    create_tables()
 
     from app.services import tmv_browser_service
 
@@ -92,7 +101,8 @@ def test_get_job_returns_job_for_existing(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, job)
 
     loaded = tmv_browser_service.get_job(mock_case.case_id, "test-job-1")
     assert loaded is not None
@@ -113,13 +123,15 @@ def test_cancel_job_sets_status_cancelled(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, job)
 
     cancelled = tmv_browser_service.cancel_job(mock_case.case_id, "test-job-cancel")
     assert cancelled.status == "cancelled"
 
     # Verificér at status er gemt på disk
-    on_disk = storage_service.load_tmv_job(mock_case.case_id, "test-job-cancel")
+    with get_session_ctx() as session:
+        on_disk = storage_service.load_tmv_job(session, mock_case.case_id, "test-job-cancel")
     assert on_disk.status == "cancelled"
 
 
@@ -144,7 +156,8 @@ def test_latest_active_job_returns_none_when_no_active(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(completed_job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, completed_job)
 
     assert tmv_browser_service.latest_active_job(mock_case.case_id) is None
 
@@ -159,7 +172,8 @@ def test_latest_active_job_returns_active(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(active_job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, active_job)
 
     found = tmv_browser_service.latest_active_job(mock_case.case_id)
     assert found is not None
@@ -180,11 +194,13 @@ def test_update_writes_status_and_heartbeat(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, job)
 
     tmv_browser_service._update(job, "browser_started")
 
-    on_disk = storage_service.load_tmv_job(mock_case.case_id, "test-update")
+    with get_session_ctx() as session:
+        on_disk = storage_service.load_tmv_job(session, mock_case.case_id, "test-update")
     assert on_disk.status == "browser_started"
     assert on_disk.last_heartbeat_at is not None
 
@@ -203,12 +219,14 @@ def test_signal_ready_sets_user_ready(mock_case, monkeypatch):
         started_at=datetime.now(timezone.utc),
         download_dir="/tmp/test",
     )
-    storage_service.save_tmv_job(job)
+    with get_session_ctx() as session:
+        storage_service.save_tmv_job(session, job)
 
     updated = tmv_browser_service.signal_ready(mock_case.case_id, "test-signal")
     assert updated.user_ready is True
 
-    on_disk = storage_service.load_tmv_job(mock_case.case_id, "test-signal")
+    with get_session_ctx() as session:
+        on_disk = storage_service.load_tmv_job(session, mock_case.case_id, "test-signal")
     assert on_disk.user_ready is True
 
 

@@ -1,6 +1,8 @@
 import re
 from typing import Iterable, List, Optional
 
+from sqlmodel import Session
+
 from app.core.logging import get_logger
 from app.models.case import Case, Matrikel
 from app.models.servitut import Servitut
@@ -73,21 +75,25 @@ def parse_matrikler_from_text(text: str) -> List[Matrikel]:
     return matrikler
 
 
-def sync_case_matrikler(case_id: str, attest_doc_ids: Optional[Iterable[str]] = None) -> Optional[Case]:
-    case = storage_service.load_case(case_id)
+def sync_case_matrikler(
+    session: Session,
+    case_id: str,
+    attest_doc_ids: Optional[Iterable[str]] = None,
+) -> Optional[Case]:
+    case = storage_service.load_case(session, case_id)
     if not case:
         return None
 
     if attest_doc_ids is None:
         attest_doc_ids = [
             doc.document_id
-            for doc in storage_service.list_documents(case_id)
+            for doc in storage_service.list_documents(session, case_id)
             if doc.document_type == "tinglysningsattest"
         ]
 
     texts: list[str] = []
     for doc_id in attest_doc_ids:
-        pages = storage_service.load_ocr_pages(case_id, doc_id)
+        pages = storage_service.load_ocr_pages(session, case_id, doc_id)
         if pages:
             texts.append("\n".join(page.text for page in pages[:2]))
 
@@ -110,13 +116,15 @@ def sync_case_matrikler(case_id: str, attest_doc_ids: Optional[Iterable[str]] = 
         case.target_matrikel = parsed[0].matrikelnummer
     else:
         case.target_matrikel = valid_targets[current_target]
-    storage_service.save_case(case)
+    storage_service.save_case(session, case)
     logger.info("Synced %s matrikler for case %s", len(parsed), case_id)
     return case
 
 
-def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
-    case = storage_service.load_case(case_id)
+def update_target_matrikel(
+    session: Session, case_id: str, matrikelnummer: str
+) -> Optional[Case]:
+    case = storage_service.load_case(session, case_id)
     if not case:
         return None
 
@@ -133,7 +141,7 @@ def update_target_matrikel(case_id: str, matrikelnummer: str) -> Optional[Case]:
         return case
 
     case.target_matrikel = valid_targets.get(normalized, matrikelnummer.strip().lower())
-    storage_service.save_case(case)
+    storage_service.save_case(session, case)
     return case
 
 

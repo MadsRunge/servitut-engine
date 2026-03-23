@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.core.config import settings
+from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.services import storage_service
@@ -25,9 +26,14 @@ from app.services.ocr_service import (
 
 @pytest.fixture
 def temp_storage(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path))
     (tmp_path / "cases").mkdir()
-    return tmp_path
+    reset_engine_cache()
+    create_tables()
+    yield tmp_path
+    reset_engine_cache()
 
 
 # --- _estimate_confidence ---
@@ -88,6 +94,7 @@ def test_process_document_returns_pages(tmp_path):
     pdf_path = tmp_path / "original.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 fake")
     ocr_pdf_path = tmp_path / "ocr.pdf"
+    settings.OCR_BATCH_SIZE = 0
 
     mock_page = MagicMock()
     mock_page.extract_text.return_value = "Deklaration om byggelinier tinglyst 1971."
@@ -117,6 +124,7 @@ def test_process_document_handles_prior_ocr(tmp_path):
     pdf_path = tmp_path / "original.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 fake")
     ocr_pdf_path = tmp_path / "ocr.pdf"
+    settings.OCR_BATCH_SIZE = 0
 
     mock_page = MagicMock()
     mock_page.extract_text.return_value = "Eksisterende tekstlag."
@@ -166,10 +174,12 @@ def test_run_document_pipeline_builds_missing_artifacts(temp_storage):
         )
     ]
 
-    with patch("app.services.ocr_service.run_ocrmypdf") as mock_run_ocr:
-        with patch("app.services.ocr_service.extract_pages_from_ocr_pdf", return_value=pages):
-            with patch("app.services.ocr_service.chunk_pages", return_value=chunks):
-                result = run_document_pipeline(case_id, doc)
+    with get_session_ctx() as session:
+        storage_service.save_document(session, doc)
+        with patch("app.services.ocr_service.run_ocrmypdf") as mock_run_ocr:
+            with patch("app.services.ocr_service.extract_pages_from_ocr_pdf", return_value=pages):
+                with patch("app.services.ocr_service.chunk_pages", return_value=chunks):
+                    result = run_document_pipeline(session, case_id, doc)
 
     mock_run_ocr.assert_called_once()
     assert result.reused_ocr_pdf is False
@@ -178,8 +188,9 @@ def test_run_document_pipeline_builds_missing_artifacts(temp_storage):
     assert doc.parse_status == "ocr_done"
     assert doc.page_count == 1
     assert doc.chunk_count == 1
-    assert storage_service.load_ocr_pages(case_id, doc_id)[0].text == "Servitut om vejret"
-    assert storage_service.load_chunks(case_id, doc_id)[0].text == "Servitut om vejret"
+    with get_session_ctx() as session:
+        assert storage_service.load_ocr_pages(session, case_id, doc_id)[0].text == "Servitut om vejret"
+        assert storage_service.load_chunks(session, case_id, doc_id)[0].text == "Servitut om vejret"
 
 
 def test_run_document_pipeline_reuses_fresh_artifacts(temp_storage):
@@ -214,17 +225,17 @@ def test_run_document_pipeline_reuses_fresh_artifacts(temp_storage):
     ocr_pdf_path = storage_service.get_ocr_pdf_path(case_id, doc_id)
     ocr_pdf_path.parent.mkdir(parents=True, exist_ok=True)
     ocr_pdf_path.write_bytes(b"%PDF-1.4 ocr")
-    storage_service.save_ocr_pages(case_id, doc_id, pages)
-    storage_service.save_chunks(case_id, doc_id, chunks)
+    with get_session_ctx() as session:
+        storage_service.save_document(session, doc)
+        storage_service.save_ocr_pages(session, case_id, doc_id, pages)
+        storage_service.save_chunks(session, case_id, doc_id, chunks)
 
     original_ts = 1_000
     ocr_ts = 1_100
     pages_ts = 1_200
-    chunks_ts = 1_300
     os.utime(pdf_path, (original_ts, original_ts))
     os.utime(ocr_pdf_path, (ocr_ts, ocr_ts))
     os.utime(storage_service.get_ocr_path(case_id, doc_id), (pages_ts, pages_ts))
-    os.utime(storage_service.get_chunks_path(case_id, doc_id), (chunks_ts, chunks_ts))
 
     with patch("app.services.ocr_service.run_ocrmypdf", side_effect=AssertionError("ocrmypdf should not run")):
         with patch(
@@ -235,7 +246,8 @@ def test_run_document_pipeline_reuses_fresh_artifacts(temp_storage):
                 "app.services.ocr_service.chunk_pages",
                 side_effect=AssertionError("chunking should not run"),
             ):
-                result = run_document_pipeline(case_id, doc)
+                with get_session_ctx() as session:
+                    result = run_document_pipeline(session, case_id, doc)
 
     assert result.reused_ocr_pdf is True
     assert result.reused_pages is True
