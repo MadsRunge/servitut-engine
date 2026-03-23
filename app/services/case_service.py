@@ -30,20 +30,33 @@ def create_case(
     return case
 
 
-def get_case(session: Session, case_id: str) -> Optional[Case]:
-    return storage_service.load_case(session, case_id)
+def get_case(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Case]:
+    return storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
 
 
-def list_cases(session: Session) -> List[Case]:
-    return storage_service.list_cases(session)
+def list_cases(session: Session, owner_user_id: UUID | None = None) -> List[Case]:
+    return storage_service.list_cases(session, owner_user_id=owner_user_id)
 
 
-def delete_case(session: Session, case_id: str) -> bool:
-    return storage_service.delete_case(session, case_id)
+def delete_case(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> bool:
+    return storage_service.delete_case(session, case_id, owner_user_id=owner_user_id)
 
 
-def update_case_status(session: Session, case_id: str, status: str) -> Optional[Case]:
-    case = storage_service.load_case(session, case_id)
+def update_case_status(
+    session: Session,
+    case_id: str,
+    status: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Case]:
+    case = storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
     if not case:
         return None
     case.status = status
@@ -51,25 +64,52 @@ def update_case_status(session: Session, case_id: str, status: str) -> Optional[
     return case
 
 
-def remove_document_from_case(session: Session, case_id: str, doc_id: str) -> None:
+def remove_document_from_case(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> None:
     """Sletter dokumentet og alle tilknyttede artefakter."""
-    storage_service.delete_document(session, case_id, doc_id)
+    storage_service.delete_document(
+        session,
+        case_id,
+        doc_id,
+        owner_user_id=owner_user_id,
+    )
     logger.info(f"Removed document {doc_id} from case {case_id}")
 
 
-def add_document_to_case(session: Session, case_id: str, doc_id: str) -> Optional[Case]:
+def add_document_to_case(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Case]:
     """Med relationel storage er document_ids afledt af Document-tabellen.
     Funktionen er beholdt til bagudkompatibilitet men skriver ikke til cases-tabellen."""
-    return storage_service.load_case(session, case_id)
+    return storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
 
 
 def sync_case_matrikler(
-    session: Session, case_id: str, attest_doc_ids=None
+    session: Session,
+    case_id: str,
+    attest_doc_ids=None,
+    owner_user_id: UUID | None = None,
 ) -> Optional[Case]:
+    case = storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
+    if case is None:
+        return None
     return matrikel_service.sync_case_matrikler(session, case_id, attest_doc_ids)
 
 
 def update_target_matrikel(
-    session: Session, case_id: str, matrikelnummer: str
+    session: Session,
+    case_id: str,
+    matrikelnummer: str,
+    owner_user_id: UUID | None = None,
 ) -> Optional[Case]:
+    case = storage_service.load_case(session, case_id, owner_user_id=owner_user_id)
+    if case is None:
+        return None
     return matrikel_service.update_target_matrikel(session, case_id, matrikelnummer)

@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
+from app.services.auth_service import build_access_token, create_user
 from app.services import storage_service
 from app.services.case_service import add_document_to_case, create_case
 from app.services.ocr_service import OcrPipelineResult
@@ -30,12 +31,15 @@ def db_env(tmp_path, monkeypatch):
 
 def test_upload_document_accepts_explicit_document_type(tmp_path, monkeypatch):
     with get_session_ctx() as session:
-        case = create_case(session, "API upload")
+        user = create_user(session, email="upload-explicit@example.com", password="secret123")
+        case = create_case(session, "API upload", user_id=user.id)
+        token = build_access_token(user)
 
     response = client.post(
         f"/cases/{case.case_id}/documents",
         files={"file": ("attest.pdf", b"%PDF-1.4 fake", "application/pdf")},
         data={"document_type": "tinglysningsattest"},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 201
@@ -45,11 +49,16 @@ def test_upload_document_accepts_explicit_document_type(tmp_path, monkeypatch):
 
 def test_upload_document_infers_tinglysningsattest_from_filename(tmp_path, monkeypatch):
     with get_session_ctx() as session:
-        case = create_case(session, "API upload infer")
+        user = create_user(session, email="upload-infer@example.com", password="secret123")
+        case = create_case(session, "API upload infer", user_id=user.id)
+        token = build_access_token(user)
+
+    headers = {"Authorization": f"Bearer {token}"}
 
     response = client.post(
         f"/cases/{case.case_id}/documents",
         files={"file": ("Min Tinglysningsattest.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        headers=headers,
     )
 
     assert response.status_code == 201
@@ -59,7 +68,8 @@ def test_upload_document_infers_tinglysningsattest_from_filename(tmp_path, monke
 
 def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
     with get_session_ctx() as session:
-        case = create_case(session, "API OCR")
+        user = create_user(session, email="ocr@example.com", password="secret123")
+        case = create_case(session, "API OCR", user_id=user.id)
         doc_id = "doc-test"
         pdf_path = storage_service.get_document_pdf_path(case.case_id, doc_id)
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +84,7 @@ def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
         )
         storage_service.save_document(session, doc)
         add_document_to_case(session, case.case_id, doc_id)
+        token = build_access_token(user)
 
     pages = [PageData(page_number=1, text="OCR tekst", confidence=0.9)]
     chunks = [
@@ -109,7 +120,10 @@ def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
         )
 
     with patch("app.api.routes.ocr.run_document_pipeline", side_effect=fake_pipeline):
-        response = client.post(f"/cases/{case.case_id}/documents/{doc_id}/ocr")
+        response = client.post(
+            f"/cases/{case.case_id}/documents/{doc_id}/ocr",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert response.status_code == 200
     payload = response.json()

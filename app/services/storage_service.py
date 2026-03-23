@@ -10,6 +10,7 @@ til mtime-baseret friskhedstjek).
 import shutil
 from pathlib import Path
 from typing import List, Optional
+from uuid import UUID
 
 from sqlalchemy import delete
 from sqlmodel import Session, select
@@ -317,6 +318,17 @@ def _get_document_ids(session: Session, case_id: str) -> List[str]:
     return list(rows)
 
 
+def _load_case_row(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[CaseTable]:
+    stmt = select(CaseTable).where(CaseTable.case_id == case_id)
+    if owner_user_id is not None:
+        stmt = stmt.where(CaseTable.user_id == owner_user_id)
+    return session.exec(stmt).first()
+
+
 # ---------------------------------------------------------------------------
 # Case
 # ---------------------------------------------------------------------------
@@ -332,16 +344,23 @@ def save_case(session: Session, case: Case) -> None:
     logger.debug(f"Saved case {case.case_id}")
 
 
-def load_case(session: Session, case_id: str) -> Optional[Case]:
-    row = session.get(CaseTable, case_id)
+def load_case(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[Case]:
+    row = _load_case_row(session, case_id, owner_user_id=owner_user_id)
     if row is None:
         return None
     doc_ids = _get_document_ids(session, case_id)
     return _row_to_case(row, doc_ids)
 
 
-def list_cases(session: Session) -> List[Case]:
-    rows = session.exec(select(CaseTable)).all()
+def list_cases(session: Session, owner_user_id: UUID | None = None) -> List[Case]:
+    stmt = select(CaseTable)
+    if owner_user_id is not None:
+        stmt = stmt.where(CaseTable.user_id == owner_user_id)
+    rows = session.exec(stmt).all()
     doc_rows = session.exec(
         select(DocumentTable.case_id, DocumentTable.document_id)
     ).all()
@@ -351,8 +370,12 @@ def list_cases(session: Session) -> List[Case]:
     return [_row_to_case(row, ids_by_case.get(row.case_id, [])) for row in rows]
 
 
-def delete_case(session: Session, case_id: str) -> bool:
-    row = session.get(CaseTable, case_id)
+def delete_case(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> bool:
+    row = _load_case_row(session, case_id, owner_user_id=owner_user_id)
     if row is None:
         return False
     for table in (TmvJobTable, ReportTable, ServitutTable, ChunkTable, DocumentTable):
@@ -381,7 +404,12 @@ def load_document(
     case_id: str,
     doc_id: str,
     include_pages: bool = True,
+    owner_user_id: UUID | None = None,
 ) -> Optional[Document]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(DocumentTable, doc_id)
     if row is None or row.case_id != case_id:
         return None
@@ -392,18 +420,33 @@ def list_documents(
     session: Session,
     case_id: str,
     include_pages: bool = False,
+    owner_user_id: UUID | None = None,
 ) -> List[Document]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(DocumentTable).where(DocumentTable.case_id == case_id)
     ).all()
     return [_row_to_doc(row, include_pages=include_pages) for row in rows]
 
 
-def delete_document(session: Session, case_id: str, doc_id: str) -> None:
-    session.exec(delete(ChunkTable).where(ChunkTable.document_id == doc_id))
+def delete_document(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> None:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return
     row = session.get(DocumentTable, doc_id)
-    if row is not None:
-        session.delete(row)
+    if row is None or row.case_id != case_id:
+        return
+    session.exec(delete(ChunkTable).where(ChunkTable.document_id == doc_id))
+    session.delete(row)
     session.commit()
     get_ocr_path(case_id, doc_id).unlink(missing_ok=True)
     shutil.rmtree(_case_dir(case_id) / "page_images" / doc_id, ignore_errors=True)
@@ -431,9 +474,18 @@ def save_ocr_pages(session: Session, case_id: str, doc_id: str, pages: list) -> 
     logger.debug(f"Saved {len(pages)} OCR pages for doc {doc_id}")
 
 
-def load_ocr_pages(session: Session, case_id: str, doc_id: str) -> list:
+def load_ocr_pages(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> list:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     row = session.get(DocumentTable, doc_id)
-    if row is None or not row.pages:
+    if row is None or row.case_id != case_id or not row.pages:
         return []
     return [PageData(**p) for p in row.pages]
 
@@ -451,7 +503,16 @@ def save_chunks(
     logger.debug(f"Saved {len(chunks)} chunks for doc {doc_id}")
 
 
-def load_chunks(session: Session, case_id: str, doc_id: str) -> List[Chunk]:
+def load_chunks(
+    session: Session,
+    case_id: str,
+    doc_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Chunk]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(ChunkTable)
         .where(ChunkTable.document_id == doc_id, ChunkTable.case_id == case_id)
@@ -460,7 +521,15 @@ def load_chunks(session: Session, case_id: str, doc_id: str) -> List[Chunk]:
     return [_row_to_chunk(r) for r in rows]
 
 
-def load_all_chunks(session: Session, case_id: str) -> List[Chunk]:
+def load_all_chunks(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Chunk]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(ChunkTable)
         .where(ChunkTable.case_id == case_id)
@@ -479,15 +548,30 @@ def save_servitut(session: Session, servitut: Servitut) -> None:
 
 
 def load_servitut(
-    session: Session, case_id: str, servitut_id: str
+    session: Session,
+    case_id: str,
+    servitut_id: str,
+    owner_user_id: UUID | None = None,
 ) -> Optional[Servitut]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(ServitutTable, servitut_id)
     if row is None or row.case_id != case_id:
         return None
     return _row_to_servitut(row)
 
 
-def list_servitutter(session: Session, case_id: str) -> List[Servitut]:
+def list_servitutter(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Servitut]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(ServitutTable).where(ServitutTable.case_id == case_id)
     ).all()
@@ -511,8 +595,14 @@ def save_canonical_list(
 
 
 def load_canonical_list(
-    session: Session, case_id: str
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
 ) -> Optional[List[Servitut]]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(CaseTable, case_id)
     if row is None or row.canonical_list is None:
         return None
@@ -533,7 +623,15 @@ def save_scoring_results(session: Session, case_id: str, results: list) -> None:
     logger.debug(f"Saved scoring results for case {case_id}")
 
 
-def load_scoring_results(session: Session, case_id: str) -> Optional[list]:
+def load_scoring_results(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> Optional[list]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(CaseTable, case_id)
     if row is None or row.scoring_results is None:
         return None
@@ -550,15 +648,30 @@ def save_report(session: Session, report: Report) -> None:
 
 
 def load_report(
-    session: Session, case_id: str, report_id: str
+    session: Session,
+    case_id: str,
+    report_id: str,
+    owner_user_id: UUID | None = None,
 ) -> Optional[Report]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(ReportTable, report_id)
     if row is None or row.case_id != case_id:
         return None
     return _row_to_report(row)
 
 
-def list_reports(session: Session, case_id: str) -> List[Report]:
+def list_reports(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[Report]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(ReportTable).where(ReportTable.case_id == case_id)
     ).all()
@@ -575,15 +688,30 @@ def save_tmv_job(session: Session, job: TmvJob) -> None:
 
 
 def load_tmv_job(
-    session: Session, case_id: str, job_id: str
+    session: Session,
+    case_id: str,
+    job_id: str,
+    owner_user_id: UUID | None = None,
 ) -> Optional[TmvJob]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return None
     row = session.get(TmvJobTable, job_id)
     if row is None or row.case_id != case_id:
         return None
     return _row_to_tmv(row)
 
 
-def list_tmv_jobs(session: Session, case_id: str) -> List[TmvJob]:
+def list_tmv_jobs(
+    session: Session,
+    case_id: str,
+    owner_user_id: UUID | None = None,
+) -> List[TmvJob]:
+    if owner_user_id is not None and _load_case_row(
+        session, case_id, owner_user_id=owner_user_id
+    ) is None:
+        return []
     rows = session.exec(
         select(TmvJobTable)
         .where(TmvJobTable.case_id == case_id)

@@ -3,8 +3,10 @@ from typing import List
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.db.database import get_session
 from app.models.document import Document
+from app.models.user import User
 from app.services import case_service, storage_service
 from app.services.document_service import create_document_from_bytes
 from app.services.document_classifier import classify_document, validate_document_type
@@ -18,8 +20,9 @@ async def upload_document(
     file: UploadFile = File(...),
     document_type: str | None = Form(default=None),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id)
+    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     try:
@@ -39,16 +42,34 @@ async def upload_document(
 
 
 @router.get("/{case_id}/documents", response_model=List[Document])
-def list_documents(case_id: str, session: Session = Depends(get_session)):
-    case = case_service.get_case(session, case_id)
+def list_documents(
+    case_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    return storage_service.list_documents(session, case_id)
+    return storage_service.list_documents(
+        session,
+        case_id,
+        owner_user_id=current_user.id,
+    )
 
 
 @router.get("/{case_id}/documents/{doc_id}", response_model=Document)
-def get_document(case_id: str, doc_id: str, session: Session = Depends(get_session)):
-    doc = storage_service.load_document(session, case_id, doc_id)
+def get_document(
+    case_id: str,
+    doc_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    doc = storage_service.load_document(
+        session,
+        case_id,
+        doc_id,
+        owner_user_id=current_user.id,
+    )
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc

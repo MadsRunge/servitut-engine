@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import cases, documents, extraction, ocr, reports
+from app.api.routes import auth, cases, documents, extraction, ocr, reports
 from app.core.logging import setup_logging
 from app.db.database import create_tables
 
@@ -30,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(cases.router, prefix="/cases", tags=["cases"])
 app.include_router(documents.router, prefix="/cases", tags=["documents"])
 app.include_router(ocr.router, prefix="/cases", tags=["ocr"])

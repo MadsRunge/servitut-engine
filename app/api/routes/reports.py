@@ -4,9 +4,11 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
+from app.api.dependencies.auth import get_current_user
 from app.db.database import get_session
 from app.models.report import Report
-from app.services import case_service, matrikel_service, storage_service
+from app.models.user import User
+from app.services import case_service, storage_service
 from app.services.report_service import generate_report
 
 router = APIRouter()
@@ -17,16 +19,29 @@ def create_report(
     case_id: str,
     as_of_date: date | None = Query(default=None),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    case = case_service.get_case(session, case_id)
+    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    case = matrikel_service.sync_case_matrikler(session, case_id) or case
-    servitutter = storage_service.list_servitutter(session, case_id)
+    case = case_service.sync_case_matrikler(
+        session,
+        case_id,
+        owner_user_id=current_user.id,
+    ) or case
+    servitutter = storage_service.list_servitutter(
+        session,
+        case_id,
+        owner_user_id=current_user.id,
+    )
     if not servitutter:
         raise HTTPException(status_code=400, detail="No servitutter found — run extraction first")
 
-    all_chunks = storage_service.load_all_chunks(session, case_id)
+    all_chunks = storage_service.load_all_chunks(
+        session,
+        case_id,
+        owner_user_id=current_user.id,
+    )
 
     try:
         target = [case.target_matrikel] if case.target_matrikel else []
@@ -47,16 +62,34 @@ def create_report(
 
 
 @router.get("/{case_id}/reports", response_model=List[Report])
-def list_reports(case_id: str, session: Session = Depends(get_session)):
-    case = case_service.get_case(session, case_id)
+def list_reports(
+    case_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    case = case_service.get_case(session, case_id, owner_user_id=current_user.id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    return storage_service.list_reports(session, case_id)
+    return storage_service.list_reports(
+        session,
+        case_id,
+        owner_user_id=current_user.id,
+    )
 
 
 @router.get("/{case_id}/reports/{report_id}", response_model=Report)
-def get_report(case_id: str, report_id: str, session: Session = Depends(get_session)):
-    report = storage_service.load_report(session, case_id, report_id)
+def get_report(
+    case_id: str,
+    report_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    report = storage_service.load_report(
+        session,
+        case_id,
+        report_id,
+        owner_user_id=current_user.id,
+    )
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     return report
