@@ -451,33 +451,39 @@ def extract_canonical_from_attest_segments(
         failed_segments = 0
         total_segments = len(state.segments)
 
+        current_max_tokens = _max_tokens_for_source_type("tinglysningsattest")
+
         for index, segment in enumerate(state.segments, start=1):
-            if segment.extraction_status == "completed" and segment.extracted_servitutter:
-                _emit_progress(
-                    progress_callback,
-                    doc_id=doc_id,
-                    source_type="tinglysningsattest",
-                    stage="extracting_attest_segment",
-                    progress=0.2 + (index - 1) / max(total_segments, 1) * 0.65,
-                    message=(
-                        f"Genbruger segment {index}/{total_segments} "
-                        f"(sider {segment.page_start}-{segment.page_end}, "
-                        f"{len(segment.extracted_servitutter)} servitutter)"
-                    ),
-                    segment_id=segment.segment_id,
-                    segment_index=index,
-                    segment_count=total_segments,
-                    page_start=segment.page_start,
-                    page_end=segment.page_end,
-                    segment_status="cached",
+            if segment.extraction_status == "completed":
+                token_budget_raised = (
+                    segment.extraction_max_tokens is not None
+                    and segment.extraction_max_tokens < current_max_tokens
                 )
-                continue
-            if segment.extraction_status == "completed" and not segment.extracted_servitutter:
-                # Previously completed but with 0 results — likely a truncated LLM response
-                # (e.g. from before max_tokens was increased). Re-run to recover missing entries.
+                if segment.extracted_servitutter and not token_budget_raised:
+                    _emit_progress(
+                        progress_callback,
+                        doc_id=doc_id,
+                        source_type="tinglysningsattest",
+                        stage="extracting_attest_segment",
+                        progress=0.2 + (index - 1) / max(total_segments, 1) * 0.65,
+                        message=(
+                            f"Genbruger segment {index}/{total_segments} "
+                            f"(sider {segment.page_start}-{segment.page_end}, "
+                            f"{len(segment.extracted_servitutter)} servitutter)"
+                        ),
+                        segment_id=segment.segment_id,
+                        segment_index=index,
+                        segment_count=total_segments,
+                        page_start=segment.page_start,
+                        page_end=segment.page_end,
+                        segment_status="cached",
+                    )
+                    continue
+                # Re-run if: 0 results (likely truncated) OR token budget has been raised
+                reason = "token-budget hævet" if token_budget_raised else "0 servitutter tidligere"
                 logger.warning(
-                    "Re-running segment %s (sider %s-%s) — was 'completed' but had 0 servitutter",
-                    segment.segment_id, segment.page_start, segment.page_end,
+                    "Re-running segment %s (sider %s-%s) — %s",
+                    segment.segment_id, segment.page_start, segment.page_end, reason,
                 )
                 segment.extraction_status = "pending"
 
@@ -511,6 +517,7 @@ def extract_canonical_from_attest_segments(
                 ]
                 segment.extraction_status = "completed"
                 segment.extraction_error = None
+                segment.extraction_max_tokens = current_max_tokens
             except Exception as exc:
                 failed_segments += 1
                 segment.extraction_status = "failed"

@@ -26,6 +26,7 @@ class AttestSegment(BaseModel):
     extraction_status: str = "pending"
     extraction_attempts: int = 0
     extraction_error: Optional[str] = None
+    extraction_max_tokens: Optional[int] = None
     extracted_servitutter: List[dict[str, Any]] = Field(default_factory=list)
     last_extracted_at: Optional[datetime] = None
 
