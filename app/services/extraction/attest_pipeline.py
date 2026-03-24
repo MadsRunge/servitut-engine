@@ -452,7 +452,7 @@ def extract_canonical_from_attest_segments(
         total_segments = len(state.segments)
 
         for index, segment in enumerate(state.segments, start=1):
-            if segment.extraction_status == "completed":
+            if segment.extraction_status == "completed" and segment.extracted_servitutter:
                 _emit_progress(
                     progress_callback,
                     doc_id=doc_id,
@@ -461,7 +461,8 @@ def extract_canonical_from_attest_segments(
                     progress=0.2 + (index - 1) / max(total_segments, 1) * 0.65,
                     message=(
                         f"Genbruger segment {index}/{total_segments} "
-                        f"(sider {segment.page_start}-{segment.page_end})"
+                        f"(sider {segment.page_start}-{segment.page_end}, "
+                        f"{len(segment.extracted_servitutter)} servitutter)"
                     ),
                     segment_id=segment.segment_id,
                     segment_index=index,
@@ -471,6 +472,14 @@ def extract_canonical_from_attest_segments(
                     segment_status="cached",
                 )
                 continue
+            if segment.extraction_status == "completed" and not segment.extracted_servitutter:
+                # Previously completed but with 0 results — likely a truncated LLM response
+                # (e.g. from before max_tokens was increased). Re-run to recover missing entries.
+                logger.warning(
+                    "Re-running segment %s (sider %s-%s) — was 'completed' but had 0 servitutter",
+                    segment.segment_id, segment.page_start, segment.page_end,
+                )
+                segment.extraction_status = "pending"
 
             _emit_progress(
                 progress_callback,
