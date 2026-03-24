@@ -217,7 +217,6 @@ def delete_canonical_list(case_id: str) -> None:
     path.unlink(missing_ok=True)
     shutil.rmtree(_case_dir(case_id) / "attest_pipeline", ignore_errors=True)
     logger.info(f"Deleted canonical list and attest pipeline state for case {case_id}")
-    logger.debug(f"Saved canonical list ({len(canonical_list)}) for case {case_id}")
 
 
 def load_canonical_list(case_id: str) -> List[Servitut] | None:
