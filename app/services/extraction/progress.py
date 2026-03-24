@@ -14,20 +14,21 @@ def _emit_progress(
     message: str,
     worker: Optional[str] = None,
     servitut_count: Optional[int] = None,
+    **extra: Any,
 ) -> None:
     if not callback:
         return
-    callback(
-        {
-            "doc_id": doc_id,
-            "source_type": source_type,
-            "stage": stage,
-            "progress": progress,
-            "message": message,
-            "worker": worker,
-            "servitut_count": servitut_count,
-        }
-    )
+    event: dict[str, Any] = {
+        "doc_id": doc_id,
+        "source_type": source_type,
+        "stage": stage,
+        "progress": progress,
+        "message": message,
+        "worker": worker,
+        "servitut_count": servitut_count,
+    }
+    event.update(extra)
+    callback(event)
 
 
 def _drain_progress_queue(

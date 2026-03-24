@@ -336,7 +336,7 @@ def test_extract_canonical_from_attest_preloads_documents(monkeypatch):
     )
 
     with patch(
-        "app.services.extraction_service._extract_from_doc_chunks",
+        "app.services.extraction_service.extract_canonical_from_attest_segments",
         return_value=[make_canonical("01.01.2000-1-1")],
     ) as mock_extract:
         result = extraction_service.extract_canonical_from_attest("case-test")

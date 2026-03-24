@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.models.attest import AttestPipelineState
 from app.models.case import Case
 from app.models.chunk import Chunk
 from app.models.document import Document
@@ -285,3 +286,34 @@ def list_tmv_jobs(case_id: str) -> List[TmvJob]:
         except Exception as e:
             logger.warning(f"Could not load tmv_job {f}: {e}")
     return result
+
+
+# --- Attest pipeline state ---
+
+def _attest_pipeline_path(case_id: str, doc_id: str) -> Path:
+    return _case_dir(case_id) / "attest_pipeline" / f"{doc_id}_pipeline.json"
+
+
+def load_attest_pipeline_state(case_id: str, doc_id: str) -> Optional[AttestPipelineState]:
+    path = _attest_pipeline_path(case_id, doc_id)
+    if not json_exists(path):
+        return None
+    try:
+        return AttestPipelineState(**load_json(path))
+    except Exception as e:
+        logger.warning(f"Could not load attest pipeline state for doc {doc_id}: {e}")
+        return None
+
+
+def save_attest_pipeline_state(
+    case_id: str,
+    doc_id: str,
+    state: Optional[AttestPipelineState],
+) -> None:
+    path = _attest_pipeline_path(case_id, doc_id)
+    if state is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_json(path, state.model_dump(mode="json"))
+    logger.debug(f"Saved attest pipeline state for doc {doc_id}")

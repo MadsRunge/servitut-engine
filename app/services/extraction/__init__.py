@@ -1,3 +1,9 @@
+from app.services.extraction.attest_pipeline import (
+    AttestPipelineIncompleteError,
+    build_attest_segments,
+    extract_canonical_from_attest_segments,
+    merge_attest_servitutter,
+)
 from app.services.extraction.enricher import (
     analyze_candidate_selection,
     build_scoring_signals,
@@ -31,6 +37,10 @@ from app.services.extraction.prompts import _load_prompt
 
 __all__ = [
     "ProgressCallback",
+    "AttestPipelineIncompleteError",
+    "build_attest_segments",
+    "extract_canonical_from_attest_segments",
+    "merge_attest_servitutter",
     "_build_chunks_text",
     "_dedup_akt_servitutter",
     "_drain_progress_queue",
