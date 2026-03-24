@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session
 
 from app.api.dependencies.auth import get_current_user
@@ -22,10 +22,20 @@ router = APIRouter()
 )
 def trigger_extraction(
     case_id: str,
+    force_rebuild: bool = Query(default=False),
+    clear_attest_pipeline: bool = Query(default=False),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     case_service.verify_case_ownership(session, case_id, current_user.id)
+
+    reset_summary: dict[str, int] | None = None
+    if force_rebuild:
+        reset_summary = storage_service.reset_case_extraction_outputs(
+            session,
+            case_id,
+            clear_attest_pipeline=clear_attest_pipeline,
+        )
 
     all_chunks = storage_service.load_all_chunks(
         session,
@@ -43,6 +53,9 @@ def trigger_extraction(
         result_data={
             "message": "Extraction job queued",
             "chunk_count": len(all_chunks),
+            "force_rebuild": force_rebuild,
+            "clear_attest_pipeline": clear_attest_pipeline,
+            "reset_summary": reset_summary,
         },
     )
     storage_service.save_job(session, job)

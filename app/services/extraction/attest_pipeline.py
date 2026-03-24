@@ -375,6 +375,18 @@ def _merge_attest_servitut(existing: Servitut, incoming: Servitut) -> Servitut:
 
 def _find_merge_candidate(merged: list[Servitut], incoming: Servitut) -> Optional[int]:
     incoming_date = _normalize_key(incoming.date_reference)
+
+    # Fan-out entries merges KUN på exact date_reference.
+    # Archive_number og titel er arvet fra blokken og deles af alle fan-out entries —
+    # merge på disse ville ukorrekt samle distinkte registreringer til én.
+    if incoming.is_fanout_entry:
+        if incoming_date:
+            for idx, existing in enumerate(merged):
+                if _normalize_key(existing.date_reference) == incoming_date:
+                    return idx
+        return None
+
+    # Ikke-fanout entries: bevar eksisterende merge-logik
     incoming_archive = _normalize_key(incoming.archive_number)
     incoming_title = _normalize_key(incoming.title)
     incoming_pages = _evidence_pages(incoming)
@@ -389,6 +401,10 @@ def _find_merge_candidate(merged: list[Servitut], incoming: Servitut) -> Optiona
                 return idx
     if incoming_title:
         for idx, existing in enumerate(merged):
+            # Fanout og ikke-fanout entries merges aldrig på titel+page —
+            # fanout-titler er arvede og deles af mange entries.
+            if existing.is_fanout_entry != incoming.is_fanout_entry:
+                continue
             if (
                 _normalize_key(existing.title) == incoming_title
                 and existing.source_document == incoming.source_document
@@ -399,6 +415,7 @@ def _find_merge_candidate(merged: list[Servitut], incoming: Servitut) -> Optiona
 
 
 def merge_attest_servitutter(servitutter: List[Servitut]) -> list[Servitut]:
+    from collections import Counter
     merged: list[Servitut] = []
     for servitut in servitutter:
         match_index = _find_merge_candidate(merged, servitut)
@@ -413,6 +430,19 @@ def merge_attest_servitutter(servitutter: List[Servitut]) -> list[Servitut]:
             )
             continue
         merged[match_index] = _merge_attest_servitut(merged[match_index], servitut)
+
+    # Sanity check: fan-out entries fra samme blok skal have unikke date_references
+    block_date_keys = [
+        (s.declaration_block_id, _normalize_key(s.date_reference))
+        for s in merged
+        if s.is_fanout_entry and s.declaration_block_id
+    ]
+    dups = [k for k, n in Counter(block_date_keys).items() if n > 1]
+    if dups:
+        logger.warning(
+            "Fan-out merge collision opdaget for %d (block_id, date_reference)-nøgler",
+            len(dups),
+        )
 
     merged.sort(
         key=lambda item: (
@@ -434,9 +464,20 @@ def extract_canonical_from_attest_segments(
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> list[Servitut]:
-    prompt_template = _load_prompt("tinglysningsattest")
+    """Udtræk canonical liste fra tinglysningsattest via deterministisk pipeline.
+
+    Pipeline v2 (erstatter LLM-per-segment):
+      1. Byg/genindlæs segmenter (page-window)
+      2. Klassificér block-types deterministisk
+      3. Assembl DeclarationBlock[]
+      4. Fan-out til RegistrationEntry[] (Servitut)
+      5. Merge/dedup på date_reference
+    """
+    from app.services.attest.segmenter import classify_segment_block_type
+    from app.services.attest.assembler import assemble_declaration_blocks
+    from app.services.attest.fanout import fan_out_registration_entries
+
     all_servitutter: list[Servitut] = []
-    incomplete_docs: list[dict] = []
 
     for doc_id, chunk_list in attest_by_doc.items():
         state = _load_or_build_pipeline_state(
@@ -458,132 +499,103 @@ def extract_canonical_from_attest_segments(
             )
             continue
 
-        failed_segments = 0
         total_segments = len(state.segments)
 
-        for index, segment in enumerate(state.segments, start=1):
-            if segment.extraction_status == "completed":
-                _emit_progress(
-                    progress_callback,
-                    doc_id=doc_id,
-                    source_type="tinglysningsattest",
-                    stage="extracting_attest_segment",
-                    progress=0.2 + (index - 1) / max(total_segments, 1) * 0.65,
-                    message=(
-                        f"Genbruger segment {index}/{total_segments} "
-                        f"(sider {segment.page_start}-{segment.page_end})"
-                    ),
-                    segment_id=segment.segment_id,
-                    segment_index=index,
-                    segment_count=total_segments,
-                    page_start=segment.page_start,
-                    page_end=segment.page_end,
-                    segment_status="cached",
-                )
-                continue
+        # --- Trin 1: Klassificér block-types (deterministisk) ---
+        _emit_progress(
+            progress_callback,
+            doc_id=doc_id,
+            source_type="tinglysningsattest",
+            stage="classifying_blocks",
+            progress=0.25,
+            message=f"Klassificerer {total_segments} segmenter",
+            segment_count=total_segments,
+        )
+        unknown_count = 0
+        for segment in state.segments:
+            if segment.block_type == "unknown":
+                segment.block_type = classify_segment_block_type(segment.text)
+                if segment.block_type == "unknown":
+                    unknown_count += 1
 
-            _emit_progress(
-                progress_callback,
-                doc_id=doc_id,
-                source_type="tinglysningsattest",
-                stage="extracting_attest_segment",
-                progress=0.2 + (index - 1) / max(total_segments, 1) * 0.65,
-                message=f"Ekstraherer segment {index}/{total_segments} (sider {segment.page_start}-{segment.page_end})",
-                segment_id=segment.segment_id,
-                segment_index=index,
-                segment_count=total_segments,
-                page_start=segment.page_start,
-                page_end=segment.page_end,
-                segment_status="running",
+        if unknown_count:
+            logger.info(
+                "case=%s doc=%s: %d/%d segmenter forbliver UNKNOWN efter klassificering",
+                case_id,
+                doc_id,
+                unknown_count,
+                total_segments,
             )
 
-            segment_chunks = _segment_chunks(chunk_list, segment)
-            segment.extraction_attempts += 1
-            segment.last_extracted_at = datetime.utcnow()
-            try:
-                extracted = _extract_segment_servitutter(
-                    segment,
-                    segment_chunks,
-                    case_id,
-                    prompt_template,
-                )
-                segment.extracted_servitutter = [
-                    servitut.model_dump(mode="json") for servitut in extracted
-                ]
-                segment.extraction_status = "completed"
-                segment.extraction_error = None
-            except Exception as exc:
-                failed_segments += 1
-                segment.extraction_status = "failed"
-                segment.extraction_error = str(exc)
-                logger.exception(
-                    "Attest segment extraction failed for case=%s doc=%s segment=%s",
-                    case_id,
-                    doc_id,
-                    segment.segment_id,
-                )
-                _emit_progress(
-                    progress_callback,
-                    doc_id=doc_id,
-                    source_type="tinglysningsattest",
-                    stage="attest_segment_failed",
-                    progress=0.2 + index / max(total_segments, 1) * 0.65,
-                    message=(
-                        f"Segment {index}/{total_segments} fejlede "
-                        f"(sider {segment.page_start}-{segment.page_end}): {exc}"
-                    ),
-                    segment_id=segment.segment_id,
-                    segment_index=index,
-                    segment_count=total_segments,
-                    page_start=segment.page_start,
-                    page_end=segment.page_end,
-                    segment_status="failed",
-                )
-            finally:
-                state.updated_at = datetime.utcnow()
-                storage_service.save_attest_pipeline_state(session, case_id, doc_id, state)
+        # --- Trin 2: Assembl DeclarationBlock[] ---
+        _emit_progress(
+            progress_callback,
+            doc_id=doc_id,
+            source_type="tinglysningsattest",
+            stage="assembling_blocks",
+            progress=0.40,
+            message="Assemblerer deklarationsblokke",
+            segment_count=total_segments,
+        )
+        if not state.declaration_blocks:
+            state.declaration_blocks = assemble_declaration_blocks(
+                state.segments, case_id, doc_id
+            )
+            state.updated_at = datetime.utcnow()
+            storage_service.save_attest_pipeline_state(session, case_id, doc_id, state)
 
+        block_count = len(state.declaration_blocks)
+        logger.info(
+            "case=%s doc=%s: %d blokke assembleret fra %d segmenter",
+            case_id,
+            doc_id,
+            block_count,
+            total_segments,
+        )
+
+        # --- Trin 3: Fan-out til RegistrationEntry[] ---
+        _emit_progress(
+            progress_callback,
+            doc_id=doc_id,
+            source_type="tinglysningsattest",
+            stage="fanout_entries",
+            progress=0.60,
+            message=f"Fan-out fra {block_count} blokke",
+            segment_count=total_segments,
+        )
+        doc_servitutter: list[Servitut] = []
+        unresolved: list[str] = []
+        for block in state.declaration_blocks:
+            entries, resolved = fan_out_registration_entries(block, case_id)
+            if resolved:
+                doc_servitutter.extend(entries)
+            else:
+                unresolved.append(block.block_id)
+
+        if unresolved:
+            state.unresolved_block_ids = unresolved
+            state.updated_at = datetime.utcnow()
+            storage_service.save_attest_pipeline_state(session, case_id, doc_id, state)
+            logger.warning(
+                "case=%s doc=%s: %d uafklarede blokke (ingen gyldige date_references)",
+                case_id,
+                doc_id,
+                len(unresolved),
+            )
+
+        # --- Trin 4: Merge/dedup ---
         _emit_progress(
             progress_callback,
             doc_id=doc_id,
             source_type="tinglysningsattest",
             stage="merging_attest_segments",
-            progress=0.93,
-            message=f"Fletter segmentresultater ({total_segments - failed_segments}/{total_segments} klare)",
+            progress=0.90,
+            message=f"Fletter {len(doc_servitutter)} entries",
             segment_count=total_segments,
         )
-
-        if failed_segments:
-            incomplete_docs.append(
-                {
-                    "document_id": doc_id,
-                    "failed_segments": failed_segments,
-                    "total_segments": total_segments,
-                }
-            )
-            _emit_progress(
-                progress_callback,
-                doc_id=doc_id,
-                source_type="tinglysningsattest",
-                stage="failed",
-                progress=1.0,
-                message=(
-                    "Attest-ekstraktion ufuldstændig; canonical liste gemmes ikke "
-                    f"({failed_segments}/{total_segments} segmenter fejlede)"
-                ),
-                segment_count=total_segments,
-                failed_segments=failed_segments,
-            )
-            continue
-
-        segment_servitutter = [
-            Servitut(**payload)
-            for segment in state.segments
-            if segment.extraction_status == "completed"
-            for payload in segment.extracted_servitutter
-        ]
-        merged_doc = merge_attest_servitutter(segment_servitutter)
+        merged_doc = merge_attest_servitutter(doc_servitutter)
         all_servitutter.extend(merged_doc)
+
         _emit_progress(
             progress_callback,
             doc_id=doc_id,
@@ -591,15 +603,11 @@ def extract_canonical_from_attest_segments(
             stage="completed",
             progress=1.0,
             message=(
-                f"Færdig: {len(merged_doc)} servitut(ter) "
-                f"fra {total_segments - failed_segments}/{total_segments} segmenter"
+                f"Færdig: {len(merged_doc)} servitut(ter) fra {block_count} blokke"
+                + (f" ({len(unresolved)} uafklarede)" if unresolved else "")
             ),
             servitut_count=len(merged_doc),
             segment_count=total_segments,
-            failed_segments=failed_segments,
         )
-
-    if incomplete_docs:
-        raise AttestPipelineIncompleteError(case_id, incomplete_docs)
 
     return merge_attest_servitutter(all_servitutter)

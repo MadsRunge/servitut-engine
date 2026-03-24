@@ -146,6 +146,7 @@ def test_get_report_returns_404_for_foreign_case_report():
         ),
         ("GET", "/cases/{case_id}/documents", {}),
         ("GET", "/cases/{case_id}/documents/doc-foreign", {}),
+        ("GET", "/cases/{case_id}/documents/doc-foreign/attest-debug", {}),
         ("POST", "/cases/{case_id}/documents/doc-foreign/ocr", {}),
         ("GET", "/cases/{case_id}/documents/doc-foreign/pages", {}),
         ("GET", "/cases/{case_id}/documents/doc-foreign/chunks", {}),

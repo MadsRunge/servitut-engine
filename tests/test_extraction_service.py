@@ -2,7 +2,7 @@ from unittest.mock import patch
 from datetime import date
 
 from app.core.config import settings
-from app.models.attest import AttestPipelineState, AttestSegment
+from app.models.attest import AttestBlockType, AttestPipelineState, AttestSegment, DeclarationBlock
 from app.models.chunk import Chunk
 from app.models.document import Document, PageData
 from app.models.servitut import Evidence, Servitut
@@ -430,8 +430,18 @@ def test_merge_attest_servitutter_deduplicates_overlapping_segments():
 
 
 def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypatch):
+    """Pipeline v2: declaration_blocks i state bruges som cache — assembler kaldes ikke igen."""
     chunk = make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret")
-    cached = make_canonical("09.02.1957-490-40", archive_number="40 B 405", title="Vejret")
+    block = DeclarationBlock(
+        block_id="aabbccddeeff",
+        case_id="case-test",
+        document_id="doc-attest",
+        page_start=1,
+        page_end=1,
+        source_segment_ids=["doc-attest-segment-0000"],
+        status="aktiv",
+        fanout_date_refs=["09.02.1957-490-40"],
+    )
     state = AttestPipelineState(
         case_id="case-test",
         document_id="doc-attest",
@@ -447,10 +457,10 @@ def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypat
                 page_numbers=[1],
                 text="[Side 1]\n09.02.1957-490-40 vejret",
                 text_hash="hash",
-                extraction_status="completed",
-                extracted_servitutter=[cached.model_dump(mode="json")],
+                block_type=AttestBlockType.DECLARATION_CONTINUATION,
             )
         ],
+        declaration_blocks=[block],
     )
     events = []
 
@@ -464,6 +474,7 @@ def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypat
         "save_attest_pipeline_state",
         lambda session, case_id, doc_id, current_state: None,
     )
+    # Deterministic pipeline — LLM must not be called
     monkeypatch.setattr(
         attest_pipeline,
         "generate_text",
@@ -478,17 +489,21 @@ def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypat
     )
 
     assert len(result) == 1
-    assert result[0].date_reference == "09.02.1957-490-40"
-    assert [event["stage"] for event in events] == [
+    # date_reference er normaliseret af fanout.py: DD.MM.YYYY-NNN → YYYYMMDD-NNN
+    assert result[0].date_reference == "19570209-490-40"
+    stages = [event["stage"] for event in events]
+    assert stages == [
         "indexed_attest",
-        "extracting_attest_segment",
+        "classifying_blocks",
+        "assembling_blocks",
+        "fanout_entries",
         "merging_attest_segments",
         "completed",
     ]
-    assert events[1]["segment_status"] == "cached"
 
 
 def test_extract_canonical_from_attest_segments_persists_segment_results(monkeypatch):
+    """Pipeline v2: declaration_blocks persisteres i state efter assembly."""
     chunks = [
         make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
         make_chunk("doc-attest", page=2, text="10.02.1957-491-40 ledning"),
@@ -532,15 +547,6 @@ def test_extract_canonical_from_attest_segments_persists_segment_results(monkeyp
 
     monkeypatch.setattr(attest_pipeline.storage_service, "save_attest_pipeline_state", _save_state)
     monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
-    monkeypatch.setattr(
-        attest_pipeline,
-        "generate_text",
-        lambda prompt, **kwargs: (
-            '[{"date_reference":"09.02.1957-490-40","title":"Vejret","confidence":0.8}]'
-            if "Side 1" in prompt
-            else '[{"date_reference":"10.02.1957-491-40","title":"Ledning","confidence":0.7}]'
-        ),
-    )
 
     result = attest_pipeline.extract_canonical_from_attest_segments(
         None,
@@ -548,23 +554,25 @@ def test_extract_canonical_from_attest_segments_persists_segment_results(monkeyp
         "case-test",
     )
 
-    assert [servitut.date_reference for servitut in result] == [
-        "09.02.1957-490-40",
-        "10.02.1957-491-40",
-    ]
-    assert len(saved_states) == 3
-    assert all(
-        segment.extraction_status == "completed"
-        for segment in state_store["value"].segments
-    )
-    assert state_store["value"].segments[0].extracted_servitutter
-    assert state_store["value"].segments[1].extracted_servitutter
+    # Begge date_references er normaliseret
+    result_refs = sorted(s.date_reference for s in result)
+    assert result_refs == ["19570209-490-40", "19570210-491-40"]
+
+    # declaration_blocks er persisteret i state
+    assert state_store["value"].declaration_blocks
+    # State er gemt mindst én gang (segmentbygge + block-assembly)
+    assert len(saved_states) >= 2
 
 
-def test_extract_canonical_from_attest_segments_raises_on_partial_failure(monkeypatch):
+def test_extract_canonical_from_attest_segments_tracks_unresolved_blocks(monkeypatch):
+    """Pipeline v2: blokke uden gyldige date_references registreres som uafklarede.
+
+    Den nye pipeline kaster IKKE AttestPipelineIncompleteError — unresolved blocks
+    registreres i state.unresolved_block_ids og pipelinen fortsætter.
+    """
     chunks = [
         make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
-        make_chunk("doc-attest", page=2, text="10.02.1957-491-40 ledning"),
+        make_chunk("doc-attest", page=2, text="ingen dato her"),
     ]
     built_segments = [
         AttestSegment(
@@ -586,7 +594,8 @@ def test_extract_canonical_from_attest_segments_raises_on_partial_failure(monkey
             page_start=2,
             page_end=2,
             page_numbers=[2],
-            text="[Side 2]\n10.02.1957-491-40 ledning",
+            # DECLARATION_START-segment uden date_reference → egen blok, uafklaret
+            text="Prioritet 2\nGenerel bestemmelse uden tinglysningsdato",
             text_hash="hash-2",
         ),
     ]
@@ -605,42 +614,22 @@ def test_extract_canonical_from_attest_segments_raises_on_partial_failure(monkey
     )
     monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
 
-    def _generate_text(prompt, **kwargs):
-        if "Side 1" in prompt:
-            return '[{"date_reference":"09.02.1957-490-40","title":"Vejret","confidence":0.8}]'
-        raise RuntimeError("temporary llm failure")
+    # Ingen exception — pipelinen fortsætter og returnerer hvad den kan
+    result = attest_pipeline.extract_canonical_from_attest_segments(
+        None,
+        {"doc-attest": chunks},
+        "case-test",
+        progress_callback=events.append,
+    )
 
-    monkeypatch.setattr(attest_pipeline, "generate_text", _generate_text)
+    # Kun segment 0 har en gyldig date_reference → 1 servitut
+    assert len(result) == 1
+    assert result[0].date_reference == "19570209-490-40"
 
-    with patch(
-        "app.services.extraction_service.storage_service.save_canonical_list",
-        side_effect=AssertionError("canonical cache must not be saved on partial failure"),
-    ):
-        try:
-            attest_pipeline.extract_canonical_from_attest_segments(
-                None,
-                {"doc-attest": chunks},
-                "case-test",
-                progress_callback=events.append,
-            )
-            assert False, "Expected partial failure to raise"
-        except attest_pipeline.AttestPipelineIncompleteError as exc:
-            assert exc.incomplete_docs == [
-                {"document_id": "doc-attest", "failed_segments": 1, "total_segments": 2}
-            ]
-
-    assert state_store["value"] is not None
-    statuses = [segment.extraction_status for segment in state_store["value"].segments]
-    assert statuses == ["completed", "failed"]
-    assert [event["stage"] for event in events] == [
-        "segmenting_attest",
-        "indexed_attest",
-        "extracting_attest_segment",
-        "extracting_attest_segment",
-        "attest_segment_failed",
-        "merging_attest_segments",
-        "failed",
-    ]
+    # Uafklarede blokke er registreret i state
+    final_state = state_store["value"]
+    assert final_state is not None
+    assert len(final_state.unresolved_block_ids) >= 1
 
 
 def test_extract_servitutter_does_not_save_partial_canonical_cache(monkeypatch):

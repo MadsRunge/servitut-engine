@@ -200,6 +200,10 @@ def _servitut_to_row(srv: Servitut) -> ServitutTable:
         confirmed_by_attest=d.get("confirmed_by_attest", True),
         review_status=d.get("review_status"),
         review_remarks=d.get("review_remarks"),
+        status=d.get("status", "ukendt"),
+        scope_type=d.get("scope_type"),
+        is_fanout_entry=d.get("is_fanout_entry", False),
+        declaration_block_id=d.get("declaration_block_id"),
         applies_to_parcel_numbers=d.get("applies_to_parcel_numbers") or [],
         raw_parcel_references=d.get("raw_parcel_references") or [],
         evidence=d.get("evidence") or [],
@@ -235,6 +239,10 @@ def _row_to_servitut(row: ServitutTable) -> Servitut:
         confirmed_by_attest=row.confirmed_by_attest,
         review_status=row.review_status,
         review_remarks=row.review_remarks,
+        status=row.status,
+        scope_type=row.scope_type,
+        is_fanout_entry=row.is_fanout_entry,
+        declaration_block_id=row.declaration_block_id,
         applies_to_parcel_numbers=list(row.applies_to_parcel_numbers or []),
         raw_parcel_references=list(row.raw_parcel_references or []),
         evidence=evidence,
@@ -688,6 +696,55 @@ def list_servitutter(
         select(ServitutTable).where(ServitutTable.case_id == case_id)
     ).all()
     return [_row_to_servitut(r) for r in rows]
+
+
+def reset_case_extraction_outputs(
+    session: Session,
+    case_id: str,
+    *,
+    clear_attest_pipeline: bool = False,
+) -> dict[str, int]:
+    servitut_count = len(
+        session.exec(select(ServitutTable).where(ServitutTable.case_id == case_id)).all()
+    )
+    report_count = len(
+        session.exec(select(ReportTable).where(ReportTable.case_id == case_id)).all()
+    )
+    declaration_count = len(
+        session.exec(
+            select(ServituterklaeringTable).where(ServituterklaeringTable.case_id == case_id)
+        ).all()
+    )
+
+    session.exec(delete(ServitutTable).where(ServitutTable.case_id == case_id))
+    session.exec(delete(ReportTable).where(ReportTable.case_id == case_id))
+    session.exec(delete(ServituterklaeringTable).where(ServituterklaeringTable.case_id == case_id))
+
+    cleared_attest_states = 0
+    if clear_attest_pipeline:
+        document_rows = session.exec(
+            select(DocumentTable).where(DocumentTable.case_id == case_id)
+        ).all()
+        for row in document_rows:
+            if row.attest_pipeline_state is None:
+                continue
+            row.attest_pipeline_state = None
+            session.add(row)
+            cleared_attest_states += 1
+
+    case_row = session.get(CaseTable, case_id)
+    if case_row is not None:
+        case_row.canonical_list = None
+        case_row.scoring_results = None
+        session.add(case_row)
+
+    session.commit()
+    return {
+        "servitutter_deleted": servitut_count,
+        "reports_deleted": report_count,
+        "declarations_deleted": declaration_count,
+        "attest_states_cleared": cleared_attest_states,
+    }
 
 
 # ---------------------------------------------------------------------------

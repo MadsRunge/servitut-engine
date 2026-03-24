@@ -24,6 +24,7 @@ from app.services.extraction.enricher import (
     score_chunks,
     select_candidate_chunks,
 )
+from app.services.attest.scope_resolver import resolve_scope
 
 logger = get_logger(__name__)
 
@@ -119,6 +120,12 @@ def extract_servitutter(
 
     case = matrikel_service.sync_case_matrikler(session, case_id, attest_by_doc.keys())
     all_matrikler = [matrikel.parcel_number for matrikel in case.parcels] if case else []
+    primary_parcel = case.primary_parcel_number if case else None
+    canonical_list = resolve_scope(
+        canonical_list,
+        all_matrikler,
+        primary_parcel=primary_parcel,
+    )
 
     if not akt_chunks:
         return canonical_list

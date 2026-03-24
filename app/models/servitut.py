@@ -1,7 +1,21 @@
 from datetime import date
+from enum import Enum
 from typing import List, Optional
 
 from sqlmodel import Field, SQLModel
+
+
+class EntryStatus(str, Enum):
+    AKTIV  = "aktiv"
+    AFLYST = "aflyst"
+    UKENDT = "ukendt"
+
+
+class ScopeType(str, Enum):
+    EXPLICIT_PARCEL_LIST = "explicit_parcel_list"
+    WHOLE_PROPERTY       = "whole_property"
+    AREA_DESCRIPTION     = "area_description"
+    UNKNOWN              = "unknown"
 
 
 class Evidence(SQLModel):
@@ -44,3 +58,8 @@ class Servitut(SQLModel):
     # beregnes separat i ServituterklaeringRow).
     review_status: Optional[str] = None  # ReviewStatus-streng
     review_remarks: Optional[str] = None
+    # Pipeline v2 — attest-model felter
+    status: str = "ukendt"             # EntryStatus: aktiv | aflyst | ukendt
+    scope_type: Optional[str] = None   # ScopeType streng
+    is_fanout_entry: bool = False       # True = arvet fra fan-out af DeclarationBlock
+    declaration_block_id: Optional[str] = None  # provenance → DeclarationBlock

@@ -118,6 +118,10 @@ class ServitutTable(SQLModel, table=True):
     confirmed_by_attest: bool = Field(default=True)
     review_status: Optional[str] = None
     review_remarks: Optional[str] = None
+    status: str = Field(default="ukendt")
+    scope_type: Optional[str] = None
+    is_fanout_entry: bool = Field(default=False)
+    declaration_block_id: Optional[str] = None
     # JSONB-lister
     applies_to_parcel_numbers: Optional[Any] = Field(
         default=None, sa_column=Column(JSON_VALUE, nullable=True)

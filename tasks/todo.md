@@ -1,3 +1,66 @@
+## Local test stack doc
+
+- [x] Skriv en kort docs-fil med den lokale startup-rækkefølge for backend, Redis, worker og frontend
+
+## Local test stack review
+
+- Oprettede en kort lokal test-guide, så den fulde stack kan startes ens hver gang før frontend-test af OCR/extraction-flow.
+
+## Aalborg frontend test readiness plan
+
+- [x] Tilføj et eksplicit rerun-flow for extraction i frontend, så sagen kan køres igen selv når der allerede findes servitutter
+- [x] Aftal og implementér den nødvendige backend-kontrakt til frontend-debugning af den nye attest-pipeline
+- [x] Tilpas review-UI til de nye canonical felter fra attest-pipeline v2
+- [x] Tilføj en lille QA-checkliste for Aalborg-casen, så vi kan verificere flowet end-to-end i frontend
+
+## Aalborg frontend test readiness review
+
+- Implementerede et eksplicit rerun-flow i frontend, som kalder `POST /cases/{case_id}/extract` med `force_rebuild=true` og `clear_attest_pipeline=true`, så sagen kan genkøres fra en ren attest-pipeline uden manuel DB-oprydning.
+- Tilføjede backend-reset af servitutter, canonical cache, redegørelser, erklæringer og attest-pipeline-state samt en lille debug-endpoint for attest-dokumenter.
+- Tilføjede attest-debugvisning i dokumentlisten og udvidede review-panelet med de vigtigste pipeline-v2-felter: status, fan-out-markering, `date_reference`, `scope_type`, `declaration_block_id` og flags.
+- Tilføjede QA-checkliste i `servitut-frontend/docs/aalborg_frontend_qa.md` for Aalborg-flowet.
+- Verificeret med backend-tests `26 passed`, extraction-service-tests `32 passed`, frontend `pnpm lint`, frontend `pnpm typecheck`, samt Alembic SQL-render for den nye migration.
+
+## Frontend readiness assessment
+
+- [x] Gennemgå frontend-flow for caseworkspace, upload, OCR/extraction-job og servitutvisning
+- [x] Sammenhold UI-flow med backend-pipeline og identificér manglende koblinger eller åbenlyse gaps
+- [x] Skriv en kort vurdering af om frontend er klar til realistisk test eller stadig for ufærdig
+
+## Frontend readiness review
+
+- Frontenden er teknisk testbar i sin nuværende form: upload, OCR-kø, extraction-job polling, review-liste, redegørelse og erklæring er alle koblet op i `src/features/cases/components/case-workspace.tsx`.
+- Baseline-checks bestod i `servitut-frontend`: `pnpm lint` og `pnpm typecheck`.
+- Den største funktionelle UI-gap er, at extraction-flowet antager at første fundne servitutter betyder "klar til review". `getAnalysisState()` sætter kun `canExtract` når `servitutter.length === 0`, så UI'et giver ikke en naturlig vej til at genkøre extraction efter et delvist eller forkert resultat.
+- Pipeline-gapet er større end UI-gapet: frontend er bygget mod den nuværende backend-kontrakt, men backendens attest-pipeline er stadig den gamle LLM-drevne enumeration. Derfor er UI'et egnet til workflow-test og manuel review, men ikke et stærkt bevis på korrekthed for Aalborg-lignende cases.
+
+## Claude review prompt plan
+
+- [x] Saml den nødvendige kontekst om Aalborg vs. København/Middelfart og den nye attest-model
+- [x] Skriv en præcis prompt, der beder Claude Code læse planen og lave sin egen uafhængige analyse
+- [x] Gem prompten som en genbrugelig markdown-fil under `docs/`
+
+## Claude review prompt review
+
+- Oprettede `docs/claude_attest_solution_review_prompt.md` som en klar prompt til Claude Code.
+- Prompten peger Claude til den nye planfil, beskriver Aalborg-problemet kontra tidligere cases og beder om en uafhængig evaluering af løsningsretningen.
+- Prompten beder eksplicit om vurdering af datamodel, pipeline, risici, alternativ design og næste implementeringstrin, så outputtet bliver brugbart som arkitektur-review og ikke bare en opsummering.
+
+## Attest registration model plan
+
+- [x] Afklar de domænemæssige forskelle mellem Aalborg og de tidligere København/Middelfart-cases
+- [x] Beskriv en generel attest-model, der ikke er afhængig af case-specifik prompt-tuning
+- [x] Dokumentér hvornår scope kobles fra canonical entries til ejendommens matrikler
+- [x] Beskriv hvordan modellen understøtter både erklæring og redegørelse som slutprodukter
+- [x] Gem planen som en kort, præcis markdown-fil under `docs/`
+
+## Attest registration model review
+
+- Oprettede en ny plan i `docs/attest_registration_model_plan.md` for en generel attest-parser, der kan håndtere både klassiske cases (København/Middelfart) og Aalborgs fan-out-mønster med mange `date_reference` under samme synlige deklarationsblok.
+- Planen fastlægger, at `date_reference` er den atomare canonical enhed, mens en `Prioritet`-/deklarationsblok er en metadata-kilde som kan fanes ud til mange registreringer.
+- Scope-mappingen er placeret efter canonical fan-out og før akt-berigelse, så både erklæring og redegørelse bygger på samme strukturerede scope-grundlag.
+- Dokumentet anbefaler en deterministisk attest-parser som primær motor og begrænser LLM-brug til metadata-berigelse og fallback, så løsningen ikke bliver prompt-tung eller case-specifik.
+
 # Alembic and local PostgreSQL setup
 
 - [x] Add Alembic configuration and a first migration that captures the current PostgreSQL schema.
