@@ -238,7 +238,7 @@ def test_extract_document_servitutter_uses_larger_token_budget_for_attest():
             "tinglysningsattest",
         )
 
-    assert mock_generate.call_args.kwargs["max_tokens"] == 8192
+    assert mock_generate.call_args.kwargs["max_tokens"] == 16000
 
 
 def test_extract_document_servitutter_can_use_separate_extraction_provider_and_model(monkeypatch):

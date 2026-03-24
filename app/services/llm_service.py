@@ -53,11 +53,18 @@ def _generate_with_anthropic(
     model: str | None = None,
     default_model: str | None = None,
 ) -> str:
+    import logging
     message = _get_anthropic_client().messages.create(
         model=_resolve_model(model, default_model=default_model),
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        logging.getLogger(__name__).warning(
+            "LLM response hit max_tokens (%d) — output may be truncated. "
+            "Consider increasing max_tokens or reducing input size.",
+            max_tokens,
+        )
     return _extract_anthropic_text(message)
 
 

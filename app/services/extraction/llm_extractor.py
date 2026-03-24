@@ -128,8 +128,8 @@ def _find_evidence_chunk(chunks: List[Chunk], doc_id: str) -> List[Evidence]:
 
 def _max_tokens_for_source_type(source_type: str) -> int:
     if source_type.startswith("tinglysningsattest"):
-        # A long attest can contain dozens of servitutter. Give it more room than akt enrichment.
-        return 8192
+        # A dense attest segment can contain 20-40 servitutter with all fields — needs ample room.
+        return 16000
     return 4096
 
 

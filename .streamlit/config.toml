@@ -2,6 +2,8 @@
 enableWebsocketCompression = false
 maxUploadSize = 200
 headless = true
+# Keep WebSocket alive for long-running LLM pipeline jobs (Railway proxy timeout is ~10 min)
+pingTimeout = 3600
 
 [browser]
 gatherUsageStats = false
