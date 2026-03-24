@@ -209,6 +209,14 @@ def list_servitutter(case_id: str) -> List[Servitut]:
 def save_canonical_list(case_id: str, canonical_list: List[Servitut]) -> None:
     path = _case_dir(case_id) / "canonical_list.json"
     save_json(path, [s.model_dump() for s in canonical_list])
+
+
+def delete_canonical_list(case_id: str) -> None:
+    import shutil
+    path = _case_dir(case_id) / "canonical_list.json"
+    path.unlink(missing_ok=True)
+    shutil.rmtree(_case_dir(case_id) / "attest_pipeline", ignore_errors=True)
+    logger.info(f"Deleted canonical list and attest pipeline state for case {case_id}")
     logger.debug(f"Saved canonical list ({len(canonical_list)}) for case {case_id}")
 
 

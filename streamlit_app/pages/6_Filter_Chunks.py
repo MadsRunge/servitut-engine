@@ -238,7 +238,7 @@ if canonical_key not in st.session_state:
 
 canonical_list = st.session_state.get(canonical_key, [])
 has_canonical = bool(canonical_list)
-col_canonical, col_rerun_canonical = st.columns([2, 1])
+col_canonical, col_rerun_canonical, col_delete_canonical = st.columns([2, 1, 1])
 
 if not canonical_list:
     st.info(
@@ -291,6 +291,11 @@ else:
         run_canonical = True
     elif col_rerun_canonical.button("Udtræk om igen", disabled=not has_canonical):
         run_canonical = True
+
+    if col_delete_canonical.button("Slet og start forfra", disabled=not has_canonical, type="secondary"):
+        storage_service.delete_canonical_list(case_id)
+        st.session_state.pop(canonical_key, None)
+        st.rerun()
 
     if run_canonical:
         st.session_state[_CA_EVENTS] = []
