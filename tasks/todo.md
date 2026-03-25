@@ -1,3 +1,36 @@
+## Main rollback analysis plan
+
+- [x] Bekræft analyseomfang, læs repo-instrukser og brug eksisterende task-spor i `tasks/todo.md`
+- [x] Kortlæg commit-historikken fra `dbf4de61b8912e2416bb880ee7bde9057b7d3844` og `9814ec33f843a27d5778306a1f784a69dafc3b4d` frem til nuværende `main`
+- [x] Identificér hvilke efterfølgende commits der ændrer pipeline-kritiske services, API-flow eller Streamlit-trin
+- [x] Sammenlign de to rollback-punkter og vurder hvilket der giver mindst risiko og størst sandsynlighed for at genskabe en fungerende pipeline
+- [x] Skriv en kort review-konklusion med anbefalet strategi, risici og næste skridt
+
+## Main rollback analysis review
+
+- [x] `dbf4de61 -> main` indeholder kun 6 commits; `9814ec33 -> main` indeholder 5. `9814ec33` er direkte descendant af `dbf4de61`.
+- [x] Den store adfærdsændring er `9814ec33` som introducerer segmenteret attest-pipeline, persisted segment-cache og ny prompt/logik for attest-udtræk. Det er klart den mest regressionsfarlige ændring i intervallet.
+- [x] Tre efterfølgende commits (`f904eecd`, `a1dac7dd`, `0ad3f191`) er direkte stabiliseringsfixes ovenpå den nye pipeline: højere token-budget, warning ved trunkering og automatisk re-ekstraktion af cachede segmenter som ellers ville blive genbrugt forkert.
+- [x] Der er ingen væsentlige commits i intervallet, som materielt ændrer API-endpoints eller report generation. Streamlit-workflowet ændres primært via reset-knappen i `a4636937`, som rydder både canonical liste og segment-state.
+- [x] `9814ec33` er derfor et dårligt rollback-mål: den bevarer den største adfærdsændring men fjerner de fixes, der allerede adresserer kendte regressionsmønstre i attest-flowet.
+- [x] `dbf4de61` er det eneste af de to forslag som faktisk fjerner segment-pipelinen, men allerede kørte cases kan stadig være forurenet af gemt `canonical_list.json` og `attest_pipeline/` state; rollback alene rydder ikke eksisterende sagstilstand.
+- [x] Verifikation: `.venv/bin/pytest tests/test_extraction_service.py -q` passerer (`18 passed`). Den fulde suite fejler fortsat med 2 eksisterende OCR-tests i `tests/test_ocr_pipeline.py`, hvilket ligger uden for dette rollback-interval.
+
+## Extract run failure plan
+
+- [x] Gennemgå Streamlit-konfiguration, hostingfiler og extract-siden for fejl i `_stcore` routing, page paths eller websocket-håndtering
+- [x] Find den konkrete fejlårsag for extract-runs ved at sammenholde logmønsteret med koden i `7_Extract_Servitutter.py`
+- [x] Implementér den mindst indgribende rettelse og behold eksisterende pipeline-adfærd
+- [x] Verificér fixet med relevante tests eller lokal kørsel og dokumentér eventuelle resterende risici
+
+## Extract run failure review
+
+- [x] `.streamlit/config.toml` brugte `server.pingTimeout`, men den installerede Streamlit `1.55.0` afviser den option; keepalive-fixet var derfor i praksis ikke aktivt
+- [x] Streamlit understøtter i stedet `server.websocketPingInterval`, som nu er sat til `30`, samt `disconnectedSessionTTL = 900` for at bevare session state gennem midlertidige websocket-reconnects
+- [x] `streamlit_app/pages/7_Extract_Servitutter.py` startede baggrundstråden uden `add_script_run_ctx(...)`, selv om filter-siden allerede bruger det mønster; extract-siden er nu gjort konsistent
+- [x] Nye produktionslogs viste, at worker-tråden stadig skrev til `st.session_state` inde fra `_extract_thread`; extract-siden bruger nu en `Queue` til cross-thread events/resultat, så kun hovedtråden skriver til Streamlit-state
+- [x] Verifikation: `.venv/bin/streamlit config show` viser nu de nye gyldige server-options uden warning om ukendt `pingTimeout`, `py_compile` på extract-siden passerer, og `.venv/bin/pytest tests/test_extraction_service.py -q` giver `18 passed`
+
 ## Filter chunks transparency plan
 
 - [x] Kortlæg hvilke canonical felter fra tinglysningsattesten der faktisk bruges i chunk-scoring, og hvilke der i dag er skjult i UI
@@ -450,3 +483,19 @@
 - Progress-visningerne i `streamlit_app/pages/6_Filter_Chunks.py` og `streamlit_app/pages/7_Extract_Servitutter.py` bruger nu almindelig Markdown i stedet for `unsafe_allow_html=True`
 - Extract-sidens servitut-footer bruger nu ren tekst i `st.caption(...)` i stedet for HTML-entiteter og `unsafe_allow_html`
 - Verificeret med `python -m py_compile` på `streamlit_app/ui.py`, `streamlit_app/Home.py` og alle Streamlit-sider
+
+## Extract session robustness analysis plan
+
+- [x] Kortlæg hvordan `streamlit_app/pages/7_Extract_Servitutter.py` håndterer langvarige jobs, progress og resultatpersistens
+- [x] Sammenlign extract-flowet med TMV-jobflowet samt andre Streamlit-sider med background threads
+- [x] Vurder om en mindre patch på extract-siden og `.streamlit/config.toml` sandsynligvis er nok, eller om et egentligt persisted jobspor er nødvendigt
+- [x] Skriv en kort anbefaling med lavrisiko-retning og klare grænser for hvad den løsning dækker
+
+## Extract session robustness analysis review
+
+- `streamlit_app/pages/7_Extract_Servitutter.py` er i dag primært session-båret: thread-handle, progress-events og slutresultat ligger i `st.session_state`, og `save_servitut(...)` kaldes først efter at UI-tråden ser worker-threaden som færdig
+- Det betyder, at selv hvis worker-threaden fortsætter efter et websocket-tab, er der ingen diskpersisted jobstatus som siden kan genfinde; et nyt tab/session kan derfor ikke sikkert genskabe progress eller slutresultat
+- TMV-flowet i `streamlit_app/pages/2_Upload_Documents.py` + `app/services/tmv_browser_service.py` er repoets klare robusthedsmønster: et lille jobmodel-JSON på disk, heartbeat/status-opdateringer i worker-threaden og `latest_active_job(...)` til genfinding efter tab af session state
+- `streamlit_app/pages/6_Filter_Chunks.py` viser det næstnærmeste mønster for page-level threads: `add_script_run_ctx(...)` på worker-threaden og delvis persistence via `canonical_list.json` / `attest_pipeline`, men selve scoring-jobbet er stadig ikke genfindeligt på tværs af ny session
+- `.streamlit/config.toml` bruger i main en ugyldig Streamlit 1.55-nøgle (`server.pingTimeout`); den mest nærliggende lavrisiko-konfig er `server.websocketPingInterval` plus en højere `server.disconnectedSessionTTL`, som specifikt adresserer proxy/websocket disconnects og kortvarig tab-suspend
+- Lavrisiko-anbefalingen er derfor todelt: 1) tag den lille patch i config + `add_script_run_ctx(...)` på extract-siden nu; 2) undlad nye modeller/services medmindre kravet er reel genoptagelse efter refresh/ny fane/langvarigt tab, for det kræver et egentligt `ExtractionJob`-spor efter TMV-mønsteret

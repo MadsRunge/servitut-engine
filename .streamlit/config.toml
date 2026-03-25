@@ -2,8 +2,11 @@
 enableWebsocketCompression = false
 maxUploadSize = 200
 headless = true
-# Keep WebSocket alive for long-running LLM pipeline jobs (Railway proxy timeout is ~10 min)
-pingTimeout = 3600
+# Keep WebSocket alive for long-running LLM pipeline jobs.
+# Streamlit 1.55 uses websocketPingInterval; it also derives ping timeout from this value.
+websocketPingInterval = 30
+# Keep session state around across transient proxy/websocket reconnects during long jobs.
+disconnectedSessionTTL = 900
 
 [browser]
 gatherUsageStats = false

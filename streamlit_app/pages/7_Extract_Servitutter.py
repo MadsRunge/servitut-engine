@@ -1,4 +1,5 @@
 import re
+from queue import Empty, Queue
 import sys
 import threading
 import time
@@ -96,9 +97,35 @@ _EX_RESULT   = "extract_result"
 _EX_START    = "extract_start"
 _EX_EVENTS   = "extract_events"
 _EX_DOCCOUNT = "extract_doc_count"
+_EX_QUEUE    = "extract_queue"
+
+
+def _drain_extract_messages() -> None:
+    message_queue = st.session_state.get(_EX_QUEUE)
+    if message_queue is None:
+        return
+
+    events = list(st.session_state.get(_EX_EVENTS, []))
+    latest_result = st.session_state.get(_EX_RESULT)
+
+    while True:
+        try:
+            message = message_queue.get_nowait()
+        except Empty:
+            break
+
+        if message["type"] == "event":
+            events.append(message["payload"])
+        elif message["type"] == "result":
+            latest_result = (message.get("result"), message.get("error"))
+
+    st.session_state[_EX_EVENTS] = events
+    if latest_result is not None:
+        st.session_state[_EX_RESULT] = latest_result
 
 if _EX_THREAD in st.session_state:
     thread = st.session_state[_EX_THREAD]
+    _drain_extract_messages()
     elapsed = int(time.time() - st.session_state[_EX_START])
     doc_count = st.session_state.get(_EX_DOCCOUNT, 1)
     events = st.session_state.get(_EX_EVENTS, [])
@@ -122,11 +149,13 @@ if _EX_THREAD in st.session_state:
         docs_ph.markdown("\n".join(rows))
 
     if not thread.is_alive():
+        _drain_extract_messages()
         result, error = st.session_state.pop(_EX_RESULT, (None, "Ukendt fejl"))
         st.session_state.pop(_EX_THREAD)
         st.session_state.pop(_EX_START, None)
         st.session_state.pop(_EX_EVENTS, None)
         st.session_state.pop(_EX_DOCCOUNT, None)
+        st.session_state.pop(_EX_QUEUE, None)
         if error:
             st.error(f"Fejl under udtræk: {error}")
         else:
@@ -146,17 +175,23 @@ elif st.button("Kør udtræk", type="primary", disabled=not all_chunks):
     doc_count = len(tracked_doc_ids)
     st.session_state[_EX_DOCCOUNT] = doc_count
     st.session_state[_EX_EVENTS] = []
+    result_queue: Queue = Queue()
+    st.session_state[_EX_QUEUE] = result_queue
 
-    def _extract_thread(c_id=case.case_id, chunks=all_chunks, canonical=cached_canonical):
+    def _extract_thread(
+        c_id=case.case_id,
+        chunks=all_chunks,
+        canonical=cached_canonical,
+        message_queue=result_queue,
+    ):
         def _cb(event):
-            events = list(st.session_state.get(_EX_EVENTS, []))
-            events.append(event)
-            st.session_state[_EX_EVENTS] = events
+            message_queue.put({"type": "event", "payload": event})
+
         try:
             result = extract_servitutter(chunks, c_id, progress_callback=_cb, cached_canonical=canonical)
-            st.session_state[_EX_RESULT] = (result, None)
+            message_queue.put({"type": "result", "result": result, "error": None})
         except Exception as e:
-            st.session_state[_EX_RESULT] = (None, str(e))
+            message_queue.put({"type": "result", "result": None, "error": str(e)})
 
     t = threading.Thread(target=_extract_thread, daemon=True)
     st.session_state[_EX_THREAD] = t
