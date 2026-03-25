@@ -654,7 +654,8 @@ def enrich_canonical_list(
     # key (canonical date_reference) → (best item dict, doc_id, chunk_list, priority)
     # priority 1=archive_number match, 2=exact date, 3=fuzzy date — lower = better
     best_by_key: dict[str, tuple[dict, str, List[Chunk], int]] = {}
-    # orphan_key → (item, doc_id, chunk_list) — fundet i akt men ikke i attest
+    # orphan_key → (item, doc_id, chunk_list) — fundet i akt men ikke i attest.
+    # Disse materialiseres ikke som selvstændige servitutter; de tælles kun til observability.
     orphan_best: dict[str, tuple[dict, str, List[Chunk]]] = {}
 
     # --- Fase 1: Deterministisk chunk-filtrering ---
@@ -761,7 +762,7 @@ def enrich_canonical_list(
         for item in items:
             result_key = _resolve_canonical_key(item, canonical_by_date, canonical_by_akt, canonical_list, canonical_years)
             if result_key is None:
-                # Ikke i tinglysningsattest — gem som ubekræftet
+                # Ikke i tinglysningsattest — behold kun til observability/debug.
                 orphan_key = _normalize_akt_nr(item.get("archive_number") or "") or (item.get("date_reference") or "")
                 if orphan_key and orphan_key not in orphan_best:
                     orphan_best[orphan_key] = (item, doc_id, doc_chunks)
@@ -828,47 +829,16 @@ def enrich_canonical_list(
         else:
             result.append(canonical)
 
-    # Tilføj ubekræftede servitutter (fundet i akt, ikke i attest)
-    unconfirmed_count = 0
-    for orphan_key, (item, doc_id, chunk_list) in orphan_best.items():
-        enriched_date = coerce_optional_str(item.get("date_reference"))
-        enriched_akt_nr = coerce_optional_str(item.get("archive_number"))
-        srv = Servitut(
-            easement_id=generate_servitut_id(),
-            case_id=case_id,
-            source_document=doc_id,
-            date_reference=enriched_date,
-            registered_at=parse_registered_at(item.get("registered_at"), enriched_date),
-            archive_number=enriched_akt_nr,
-            title=coerce_optional_str(item.get("title")),
-            summary=coerce_optional_str(item.get("summary")),
-            beneficiary=coerce_optional_str(item.get("beneficiary")),
-            disposition_type=coerce_optional_str(item.get("disposition_type")),
-            legal_type=coerce_optional_str(item.get("legal_type")),
-            construction_relevance=bool(item.get("construction_relevance", False)),
-            construction_impact=coerce_optional_str(item.get("construction_impact")),
-            action_note=coerce_optional_str(item.get("action_note")),
-            applies_to_parcel_numbers=coerce_str_list(item.get("applies_to_parcel_numbers")),
-            raw_parcel_references=coerce_str_list(item.get("raw_parcel_references"))
-            or coerce_str_list(item.get("applies_to_parcel_numbers")),
-            raw_scope_text=coerce_optional_str(item.get("raw_scope_text"))
-            or coerce_optional_str(item.get("scope_basis")),
-            scope_source=coerce_optional_str(item.get("scope_source")) or "akt",
-            scope_basis=coerce_optional_str(item.get("scope_basis")),
-            scope_confidence=item.get("scope_confidence"),
-            confidence=float(item.get("confidence", 0.5) or 0.5),
-            evidence=_make_akt_evidence(chunk_list, enriched_date, enriched_akt_nr),
-            confirmed_by_attest=False,
-        )
-        result.append(srv)
-        unconfirmed_count += 1
+    dropped_unconfirmed_count = len(orphan_best)
+    if dropped_unconfirmed_count:
         logger.info(
-            f"Ubekræftet servitut tilføjet (ikke i attest): {srv.title} ({srv.date_reference})"
+            "Droppede %d akt-fund, som ikke kunne matches til tinglysningsattesten",
+            dropped_unconfirmed_count,
         )
 
     logger.info(
         f"Enrichment færdig: {matched}/{len(canonical_list)} beriget, "
-        f"{unconfirmed_count} ubekræftede fra akter"
+        f"{dropped_unconfirmed_count} akt-fund droppet (ikke i attest)"
     )
     total_duration = round(time.perf_counter() - pipeline_started_at, 3)
     observability_payload = {
@@ -885,7 +855,8 @@ def enrich_canonical_list(
         "total_duration_seconds": total_duration,
         "max_workers": max_workers,
         "matched_servitutter": matched,
-        "unconfirmed_servitutter": unconfirmed_count,
+        "unconfirmed_servitutter": 0,
+        "dropped_unconfirmed_servitutter": dropped_unconfirmed_count,
         "documents": [
             {
                 "doc_id": doc_id,

@@ -8,10 +8,8 @@ from app.models.document import Document
 from app.models.servitut import Servitut
 from app.services.extraction import (
     ProgressCallback,
-    _dedup_akt_servitutter,
     _extract_document_servitutter,
     _extract_from_doc_chunks,
-    _prescreeen_chunks,
     extract_canonical_from_attest_segments,
     enrich_canonical_list,
 )
@@ -29,6 +27,14 @@ from app.services.attest.scope_resolver import resolve_scope
 logger = get_logger(__name__)
 
 
+class ExtractionRequiresAttestError(ValueError):
+    """Raised when extraction is attempted without the case's own attest."""
+
+
+class ExtractionRequiresCanonicalError(ValueError):
+    """Raised when akt enrichment is attempted without a canonical attest list."""
+
+
 def _load_documents_by_id(
     session: Session, case_id: str, doc_ids: list[str]
 ) -> dict[str, Document]:
@@ -42,28 +48,11 @@ def _load_documents_by_id(
     }
 
 
-def extract_servitutter(
+def _split_case_chunks_by_document_type(
     session: Session,
-    chunks: List[Chunk],
     case_id: str,
-    progress_callback: Optional[ProgressCallback] = None,
-    cached_canonical: Optional[List[Servitut]] = None,
-    observability_run_id: Optional[str] = None,
-) -> List[Servitut]:
-    """
-    To-pas udtræk:
-      Pas 1: Udtræk canonical liste fra tinglysningsattest (løbenumre som nøgle)
-             — springes over hvis cached_canonical er givet
-      Pas 2: Udtræk detaljer fra individuelle akter
-      Merge: Berig canonical med akt-detaljer, kassér duplikater
-
-    Fallback: Hvis ingen tinglysningsattest og ingen cached_canonical,
-              udtræk fra alle akter direkte.
-    """
-    if not chunks:
-        return []
-
-    # Klassificér chunks efter dokumenttype
+    chunks: List[Chunk],
+) -> tuple[dict[str, Document], list[Chunk], list[Chunk]]:
     doc_ids = list(dict.fromkeys(c.document_id for c in chunks))
     documents_by_id = _load_documents_by_id(session, case_id, doc_ids)
     doc_types: dict[str, str] = {}
@@ -78,63 +67,49 @@ def extract_servitutter(
             attest_chunks.append(chunk)
         else:
             akt_chunks.append(chunk)
+    return documents_by_id, attest_chunks, akt_chunks
 
-    # --- Fallback: ingen tinglysningsattest og ingen cache ---
-    if not attest_chunks and not cached_canonical:
-        logger.info("Ingen tinglysningsattest — udtræk fra alle akter direkte")
-        relevant = _prescreeen_chunks(akt_chunks)
-        if not relevant:
-            return []
-        doc_chunks: dict[str, list[Chunk]] = {}
-        for c in relevant:
-            doc_chunks.setdefault(c.document_id, []).append(c)
-        akt_list = _extract_from_doc_chunks(
-            doc_chunks,
-            case_id,
-            "akt",
-            progress_callback=progress_callback,
-        )
-        return _dedup_akt_servitutter(akt_list)
 
-    # --- Pas 1: Tinglysningsattest (spring over hvis cache er tilgængelig) ---
-    if cached_canonical:
-        logger.info(f"Pas 1: Bruger cached canonical liste ({len(cached_canonical)} servitutter) — springer LLM-kald over")
-        canonical_list = cached_canonical
-        attest_by_doc: dict[str, list[Chunk]] = {}
-        for c in attest_chunks:
-            attest_by_doc.setdefault(c.document_id, []).append(c)
-    else:
-        logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
-        attest_by_doc = {}
-        for c in attest_chunks:
-            attest_by_doc.setdefault(c.document_id, []).append(c)
-        canonical_list = extract_canonical_from_attest_segments(
-            session,
-            attest_by_doc,
-            case_id,
-            progress_callback=progress_callback,
-        )
-        if session is not None:
-            storage_service.save_canonical_list(session, case_id, canonical_list)
-    logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
+def _chunks_by_doc(chunks: List[Chunk]) -> dict[str, list[Chunk]]:
+    by_doc: dict[str, list[Chunk]] = {}
+    for chunk in chunks:
+        by_doc.setdefault(chunk.document_id, []).append(chunk)
+    return by_doc
 
-    case = matrikel_service.sync_case_matrikler(session, case_id, attest_by_doc.keys())
+
+def _resolve_case_scope(
+    session: Session,
+    case_id: str,
+    canonical_list: List[Servitut],
+    attest_doc_ids: list[str],
+) -> tuple[List[Servitut], list[str]]:
+    if session is None:
+        return canonical_list, []
+    case = matrikel_service.sync_case_matrikler(session, case_id, attest_doc_ids)
     all_matrikler = [matrikel.parcel_number for matrikel in case.parcels] if case else []
     primary_parcel = case.primary_parcel_number if case else None
-    canonical_list = resolve_scope(
+    resolved = resolve_scope(
         canonical_list,
         all_matrikler,
         primary_parcel=primary_parcel,
     )
+    return resolved, all_matrikler
 
+
+def _enrich_with_akt_chunks(
+    canonical_list: List[Servitut],
+    akt_chunks: List[Chunk],
+    documents_by_id: dict[str, Document],
+    case_id: str,
+    all_matrikler: list[str],
+    progress_callback: Optional[ProgressCallback] = None,
+    observability_run_id: Optional[str] = None,
+) -> List[Servitut]:
     if not akt_chunks:
         return canonical_list
 
-    # --- Pas 2: Canonical-driven berigelse fra akter ---
     logger.info(f"Pas 2: Canonical-driven berigelse fra akter ({len(akt_chunks)} chunks)")
-    akt_by_doc: dict[str, list[Chunk]] = {}
-    for c in akt_chunks:
-        akt_by_doc.setdefault(c.document_id, []).append(c)
+    akt_by_doc = _chunks_by_doc(akt_chunks)
 
     doc_filename_by_id: dict[str, str] = {}
     for doc_id in akt_by_doc:
@@ -153,31 +128,185 @@ def extract_servitutter(
     )
 
 
+def extract_attest_servitutter(
+    session: Session,
+    case_id: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Servitut]:
+    """Kører kun attest-pass og returnerer canonical attest-servitutter."""
+    chunks = storage_service.load_all_chunks(session, case_id)
+    if not chunks:
+        return []
+    return _extract_attest_servitutter_from_chunks(
+        session,
+        case_id,
+        chunks,
+        progress_callback=progress_callback,
+    )
+
+
+def _extract_attest_servitutter_from_chunks(
+    session: Session,
+    case_id: str,
+    chunks: List[Chunk],
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Servitut]:
+    _documents_by_id, attest_chunks, _akt_chunks = _split_case_chunks_by_document_type(
+        session,
+        case_id,
+        chunks,
+    )
+    if not attest_chunks:
+        raise ExtractionRequiresAttestError(
+            "No tinglysningsattest found — extraction requires the property's own attest"
+        )
+
+    logger.info(f"Pas 1: Udtræk fra tinglysningsattest ({len(attest_chunks)} chunks)")
+    attest_by_doc = _chunks_by_doc(attest_chunks)
+    canonical_list = extract_canonical_from_attest_segments(
+        session,
+        attest_by_doc,
+        case_id,
+        progress_callback=progress_callback,
+    )
+    logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
+
+    canonical_list, _all_matrikler = _resolve_case_scope(
+        session,
+        case_id,
+        canonical_list,
+        list(attest_by_doc.keys()),
+    )
+    if session is not None:
+        storage_service.save_canonical_list(session, case_id, canonical_list)
+    return canonical_list
+
+
+def extract_akt_servitutter(
+    session: Session,
+    case_id: str,
+    progress_callback: Optional[ProgressCallback] = None,
+    observability_run_id: Optional[str] = None,
+) -> List[Servitut]:
+    """Kører kun akt-berigelse oven på eksisterende canonical attest-liste."""
+    chunks = storage_service.load_all_chunks(session, case_id)
+    if not chunks:
+        return []
+
+    cached_canonical = storage_service.load_canonical_list(session, case_id)
+    if not cached_canonical:
+        raise ExtractionRequiresCanonicalError(
+            "No canonical attest list found — run extract-attest first"
+        )
+
+    documents_by_id, attest_chunks, akt_chunks = _split_case_chunks_by_document_type(
+        session,
+        case_id,
+        chunks,
+    )
+    if not attest_chunks:
+        raise ExtractionRequiresAttestError(
+            "No tinglysningsattest found — extraction requires the property's own attest"
+        )
+    if not akt_chunks:
+        raise ValueError("No akt documents found — upload akt documents before extract-akt")
+
+    canonical_list, all_matrikler = _resolve_case_scope(
+        session,
+        case_id,
+        cached_canonical,
+        list(dict.fromkeys(chunk.document_id for chunk in attest_chunks)),
+    )
+    logger.info(f"Pas 1: Bruger cached canonical liste ({len(canonical_list)} servitutter)")
+    return _enrich_with_akt_chunks(
+        canonical_list,
+        akt_chunks,
+        documents_by_id,
+        case_id,
+        all_matrikler,
+        progress_callback=progress_callback,
+        observability_run_id=observability_run_id,
+    )
+
+
+def extract_servitutter(
+    session: Session,
+    chunks: List[Chunk],
+    case_id: str,
+    progress_callback: Optional[ProgressCallback] = None,
+    cached_canonical: Optional[List[Servitut]] = None,
+    observability_run_id: Optional[str] = None,
+) -> List[Servitut]:
+    """
+    To-pas udtræk:
+      Pas 1: Udtræk canonical liste fra tinglysningsattest (løbenumre som nøgle)
+             — springes over hvis cached_canonical er givet
+      Pas 2: Udtræk detaljer fra individuelle akter
+      Merge: Berig canonical med akt-detaljer, kassér duplikater
+
+    Produktgrænse:
+      Sagen SKAL have egen tinglysningsattest. Akter må kun berige allerede
+      identificerede attest-servitutter og må ikke introducere nye.
+    """
+    if not chunks:
+        return []
+
+    documents_by_id, attest_chunks, akt_chunks = _split_case_chunks_by_document_type(
+        session,
+        case_id,
+        chunks,
+    )
+
+    # --- Produktgrænse: extraction kræver tinglysningsattest ---
+    if not attest_chunks and not cached_canonical:
+        raise ExtractionRequiresAttestError(
+            "No tinglysningsattest found — extraction requires the property's own attest"
+        )
+
+    # --- Pas 1: Tinglysningsattest (spring over hvis cache er tilgængelig) ---
+    if cached_canonical:
+        logger.info(f"Pas 1: Bruger cached canonical liste ({len(cached_canonical)} servitutter) — springer LLM-kald over")
+        canonical_list = cached_canonical
+        attest_by_doc = _chunks_by_doc(attest_chunks)
+    else:
+        canonical_list = _extract_attest_servitutter_from_chunks(
+            session,
+            case_id,
+            chunks,
+            progress_callback=progress_callback,
+        )
+        attest_by_doc = _chunks_by_doc(attest_chunks)
+
+    logger.info(f"Canonical liste: {len(canonical_list)} servitutter")
+    canonical_list, all_matrikler = _resolve_case_scope(
+        session,
+        case_id,
+        canonical_list,
+        list(attest_by_doc.keys()),
+    )
+
+    if not akt_chunks:
+        return canonical_list
+
+    return _enrich_with_akt_chunks(
+        canonical_list,
+        akt_chunks,
+        documents_by_id,
+        case_id,
+        all_matrikler,
+        progress_callback=progress_callback,
+        observability_run_id=observability_run_id,
+    )
+
+
 def extract_canonical_from_attest(
     session: Session,
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> List[Servitut]:
     """Kører kun Pas 1: udtræk canonical liste fra tinglysningsattest."""
-    chunks = storage_service.load_all_chunks(session, case_id)
-    documents_by_id = _load_documents_by_id(
+    return extract_attest_servitutter(
         session,
-        case_id,
-        list(dict.fromkeys(c.document_id for c in chunks)),
-    )
-    attest_chunks: list[Chunk] = []
-    for c in chunks:
-        doc = documents_by_id.get(c.document_id)
-        if doc and doc.document_type == "tinglysningsattest":
-            attest_chunks.append(c)
-    if not attest_chunks:
-        return []
-    attest_by_doc: dict[str, list[Chunk]] = {}
-    for c in attest_chunks:
-        attest_by_doc.setdefault(c.document_id, []).append(c)
-    return extract_canonical_from_attest_segments(
-        session,
-        attest_by_doc,
         case_id,
         progress_callback=progress_callback,
     )

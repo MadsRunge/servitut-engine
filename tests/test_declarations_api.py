@@ -134,6 +134,58 @@ def test_create_declaration_persists_snapshot_and_review_fields():
     assert persisted_historical.review_remarks == ""
 
 
+def test_create_declaration_ignores_non_attest_servitutter():
+    case, headers = _create_case_with_headers("decl-filter@example.com", "Filter-sag")
+
+    with get_session_ctx() as session:
+        storage_service.save_servitut(
+            session,
+            Servitut(
+                easement_id="srv-confirmed",
+                case_id=case.case_id,
+                source_document="attest-1",
+                priority=1,
+                title="Bekræftet servitut",
+                confirmed_by_attest=True,
+                confidence=0.95,
+                evidence=[
+                    Evidence(
+                        chunk_id="chunk-confirmed",
+                        document_id="attest-1",
+                        page=1,
+                        text_excerpt="Bekræftet tekst",
+                    )
+                ],
+            ),
+        )
+        storage_service.save_servitut(
+            session,
+            Servitut(
+                easement_id="srv-unconfirmed",
+                case_id=case.case_id,
+                source_document="akt-1",
+                priority=2,
+                title="Kun i akt",
+                confirmed_by_attest=False,
+                confidence=0.95,
+                evidence=[
+                    Evidence(
+                        chunk_id="chunk-unconfirmed",
+                        document_id="akt-1",
+                        page=2,
+                        text_excerpt="Kun i akt tekst",
+                    )
+                ],
+            ),
+        )
+
+    response = client.post(f"/cases/{case.case_id}/declarations", headers=headers)
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert [row["easement_id"] for row in payload["rows"]] == ["srv-confirmed"]
+
+
 def test_patch_declaration_updates_row_and_syncs_servitut():
     """PATCH updates the declaration snapshot AND propagates to Servitut.review_status."""
     case, headers = _create_case_with_headers("decl-patch@example.com", "Patch-sag")

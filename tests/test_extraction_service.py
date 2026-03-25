@@ -116,7 +116,41 @@ def test_extract_from_doc_chunks_respects_concurrency_limit(monkeypatch):
     assert captured["thread_name_prefix"] == "extract-doc"
 
 
-def test_extract_servitutter_preserves_input_document_order(monkeypatch):
+def test_extract_servitutter_requires_tinglysningsattest(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-z",
+                case_id=case_id,
+                filename="doc-z.pdf",
+                file_path="storage/cases/case-test/documents/doc-z/original.pdf",
+                document_type="akt",
+            ),
+            Document(
+                document_id="doc-a",
+                case_id=case_id,
+                filename="doc-a.pdf",
+                file_path="storage/cases/case-test/documents/doc-a/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
+    try:
+        extraction_service.extract_servitutter(
+            None,
+            [
+                make_chunk("doc-z"),
+                make_chunk("doc-a"),
+            ],
+            "case-test",
+        )
+        assert False, "Expected extraction to require a tinglysningsattest"
+    except extraction_service.ExtractionRequiresAttestError:
+        pass
+
+
+def test_extract_servitutter_can_use_cached_canonical_without_attest_chunks(monkeypatch):
     monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 4)
 
     monkeypatch.setattr(
@@ -139,27 +173,153 @@ def test_extract_servitutter_preserves_input_document_order(monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        extraction_service,
-        "_dedup_akt_servitutter",
-        lambda servitutter: servitutter,
+        extraction_service.matrikel_service,
+        "sync_case_matrikler",
+        lambda session, case_id, doc_ids: None,
     )
-    with patch(
-        "app.services.extraction_service._extract_from_doc_chunks",
-        return_value=[
-            Servitut(easement_id="srv-1", case_id="case-test", source_document="doc-z"),
-            Servitut(easement_id="srv-2", case_id="case-test", source_document="doc-a"),
-        ],
-    ):
-        result = extraction_service.extract_servitutter(
-            None,
-            [
-                make_chunk("doc-z"),
-                make_chunk("doc-a"),
-            ],
-            "case-test",
-        )
+    monkeypatch.setattr(
+        extraction_service,
+        "enrich_canonical_list",
+        lambda canonical_list, akt_by_doc, case_id, **kwargs: canonical_list,
+    )
 
-    assert [srv.source_document for srv in result] == ["doc-z", "doc-a"]
+    result = extraction_service.extract_servitutter(
+        None,
+        [
+            make_chunk("doc-z"),
+            make_chunk("doc-a"),
+        ],
+        "case-test",
+        cached_canonical=[make_canonical("01.01.2000-1-1", title="Vejret")],
+    )
+
+    assert [srv.date_reference for srv in result] == ["01.01.2000-1-1"]
+
+
+def test_extract_canonical_from_attest_requires_attest_document(monkeypatch):
+    monkeypatch.setattr(
+        extraction_service.storage_service,
+        "load_all_chunks",
+        lambda session, case_id: [make_chunk("doc-akt")],
+    )
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-akt",
+                case_id=case_id,
+                filename="akt.pdf",
+                file_path="storage/cases/case-test/documents/doc-akt/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
+
+    try:
+        extraction_service.extract_canonical_from_attest(None, "case-test")
+        assert False, "Expected canonical extraction to require a tinglysningsattest"
+    except extraction_service.ExtractionRequiresAttestError:
+        pass
+
+
+def test_enrich_canonical_list_drops_items_not_in_attest(monkeypatch):
+    canonical = [make_canonical("01.01.2000-1-1", archive_number="40 F 439", title="Vejret")]
+    chunk = make_chunk("doc-a", page=1, text="Akt 40F439 vedr. noget andet")
+
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 1)
+    monkeypatch.setattr(
+        enricher_module,
+        "analyze_candidate_selection",
+        lambda chunk_list, canonical_list: {
+            "selected_indices": [0],
+            "selected_char_count": len(chunk_list[0].text),
+            "max_score": 10,
+            "hit_indices": [0],
+        },
+    )
+    monkeypatch.setattr(
+        enricher_module,
+        "_enrich_from_doc",
+        lambda *args, **kwargs: [
+            {
+                "date_reference": "01.01.2099-9-9",
+                "archive_number": "40 Z 999",
+                "title": "Fremmed servitut",
+                "summary": "Skal ikke med",
+                "confidence": 0.95,
+            }
+        ],
+    )
+
+    result = enrich_canonical_list(
+        canonical,
+        {"doc-a": [chunk]},
+        "case-test",
+    )
+
+    assert len(result) == 1
+    assert result[0].title == "Vejret"
+    assert result[0].confirmed_by_attest is True
+
+
+def test_extract_servitutter_uses_attest_canonical_when_present(monkeypatch):
+    monkeypatch.setattr(settings, "EXTRACTION_MAX_CONCURRENCY", 4)
+
+    monkeypatch.setattr(
+        "app.services.extraction_service.storage_service.list_documents",
+        lambda session, case_id: [
+            Document(
+                document_id="doc-attest",
+                case_id=case_id,
+                filename="attest.pdf",
+                file_path="storage/cases/case-test/documents/doc-attest/original.pdf",
+                document_type="tinglysningsattest",
+            ),
+            Document(
+                document_id="doc-z",
+                case_id=case_id,
+                filename="doc-z.pdf",
+                file_path="storage/cases/case-test/documents/doc-z/original.pdf",
+                document_type="akt",
+            ),
+            Document(
+                document_id="doc-a",
+                case_id=case_id,
+                filename="doc-a.pdf",
+                file_path="storage/cases/case-test/documents/doc-a/original.pdf",
+                document_type="akt",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        extraction_service.matrikel_service,
+        "sync_case_matrikler",
+        lambda session, case_id, doc_ids: None,
+    )
+    monkeypatch.setattr(
+        extraction_service,
+        "extract_canonical_from_attest_segments",
+        lambda session, attest_by_doc, case_id, progress_callback=None: [
+            make_canonical("01.01.2000-1-1", title="Vejret")
+        ],
+    )
+    monkeypatch.setattr(
+        extraction_service,
+        "enrich_canonical_list",
+        lambda canonical_list, akt_by_doc, case_id, **kwargs: canonical_list,
+    )
+
+    result = extraction_service.extract_servitutter(
+        None,
+        [
+            make_chunk("doc-attest"),
+            make_chunk("doc-z"),
+            make_chunk("doc-a"),
+        ],
+        "case-test",
+    )
+
+    assert [srv.source_document for srv in result] == ["doc-attest"]
 
 
 def test_extract_document_servitutter_emits_progress_events():

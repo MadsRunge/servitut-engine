@@ -36,6 +36,7 @@ def create_report(
         case_id,
         owner_user_id=current_user.id,
     )
+    servitutter = [srv for srv in servitutter if srv.confirmed_by_attest]
     if not servitutter:
         raise HTTPException(status_code=400, detail="No servitutter found — run extraction first")
 

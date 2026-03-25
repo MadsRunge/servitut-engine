@@ -180,3 +180,71 @@ Verification:
 - Verified the async route flow with `./.venv/bin/python -m pytest -q tests/test_documents_api.py tests/test_jobs_api.py tests/test_auth_api.py`
 - Verified the full repository with `./.venv/bin/python -m pytest -q`
 - Result: `148 passed, 6 warnings`
+
+# Local database reset for Aalborg clean slate
+
+- [x] Inspect the PostgreSQL schema and confirm which tables can be cleared while preserving `users`
+- [x] Record the exact reset command and verify local DB connectivity
+- [x] Clear non-user application tables in local PostgreSQL
+- [x] Verify that `users` still contains data and all other application tables are empty
+
+## Review
+
+- Local DB connectivity verified against `postgresql://postgres:postgres@127.0.0.1:5432/servitut` as user `postgres`.
+- Reset command prepared:
+  `TRUNCATE TABLE cases, chunks, documents, jobs, reports, servituterklaringer, servitutter, tmv_jobs RESTART IDENTITY CASCADE;`
+- Reset executed successfully with `TRUNCATE TABLE`.
+- Post-reset verification:
+  `users=1`, `cases=0`, `documents=0`, `chunks=0`, `servitutter=0`, `jobs=0`, `reports=0`, `servituterklaringer=0`, `tmv_jobs=0`.
+- Note: this reset only touched PostgreSQL. Files in `storage/` were intentionally left as-is.
+
+# Split frontend upload by document type
+
+- [x] Inspect the current Next.js upload flow, the Streamlit upload split, and the generated client support for `document_type`
+- [x] Update the Next.js case upload UI to separate `tinglysningsattest` and `akt` uploads
+- [x] Send explicit `document_type` values from frontend upload requests instead of relying on backend filename heuristics
+- [x] Verify the frontend with `pnpm lint` and `pnpm typecheck`
+
+## Review
+
+- The Next.js case workspace now mirrors the Streamlit intent: one dedicated upload action for `tinglysningsattest` and one separate upload path for `akt`.
+- Akt drag-and-drop is now explicitly bound to `akt`, while attest upload uses its own file input, so the backend no longer has to infer Aalborg document types from filenames.
+- Frontend upload requests now send `document_type` in multipart form data through the generated client.
+- Verification passed in `servitut-frontend`:
+  `pnpm lint`
+  `pnpm typecheck`
+
+# Frontend upload size limit for Aalborg PDFs
+
+- [x] Confirm whether the 50 MB rejection is only a frontend guard and inspect the oversized Aalborg files
+- [x] Raise the Next.js upload size limit to cover the current oversized Aalborg akter
+- [x] Verify the frontend and record the result
+
+## Review
+
+- Confirmed that the 50 MB cap lived only in `servitut-frontend/src/features/cases/components/case-workspace.tsx`; no matching backend upload cap was found in the FastAPI route.
+- The blocked Aalborg akter were only slightly over the old limit: `51 MB`, `52 MB`, `56 MB`, and `60 MB`.
+- Raised the frontend guard to `100 MB`, which covers the current Aalborg set without removing the guard entirely.
+- Verification passed in `servitut-frontend`:
+  `pnpm lint`
+  `pnpm typecheck`
+- For files materially above `100 MB`, the Streamlit split-PDF workflow remains the safer fallback than allowing arbitrarily large browser uploads.
+
+# Remove uploaded documents before OCR
+
+- [x] Inspect backend and frontend support for document deletion
+- [x] Add a case-scoped `DELETE /cases/{case_id}/documents/{doc_id}` route and verify it
+- [x] Regenerate the frontend API client for the new document-delete route
+- [x] Add a delete action in the Next.js upload UI, limited to the pre-OCR state
+- [x] Verify frontend checks and record the result
+
+## Review
+
+- Added `DELETE /cases/{case_id}/documents/{doc_id}` in FastAPI and wired it to the existing document removal service.
+- Deletion is intentionally limited to documents with `parse_status="pending"` so users can clean up uploads before OCR without racing active processing.
+- Regenerated the frontend client from a locally dumped OpenAPI spec (`/tmp/servitut-openapi.json`) because the running dev server's `/openapi.json` was not a stable source during this change.
+- The Next.js upload list now shows a `Fjern` action per document; it is disabled once OCR has started.
+- Verification passed:
+  `./.venv/bin/python -m pytest -q tests/test_documents_api.py`
+  `pnpm lint`
+  `pnpm typecheck`

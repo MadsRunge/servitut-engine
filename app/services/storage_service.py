@@ -667,6 +667,19 @@ def save_servitut(session: Session, servitut: Servitut, commit: bool = True) -> 
         session.commit()
 
 
+def replace_servitutter(
+    session: Session,
+    case_id: str,
+    servitutter: List[Servitut],
+    commit: bool = True,
+) -> None:
+    session.exec(delete(ServitutTable).where(ServitutTable.case_id == case_id))
+    for servitut in servitutter:
+        session.merge(_servitut_to_row(servitut))
+    if commit:
+        session.commit()
+
+
 def load_servitut(
     session: Session,
     case_id: str,

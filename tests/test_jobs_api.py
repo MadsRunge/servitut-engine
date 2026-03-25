@@ -39,9 +39,9 @@ def test_extract_route_enqueues_background_job():
         document = Document(
             document_id="doc-1",
             case_id=case.case_id,
-            filename="akt.pdf",
+            filename="attest.pdf",
             file_path="storage/cases/doc-1/original.pdf",
-            document_type="akt",
+            document_type="tinglysningsattest",
         )
         storage_service.save_document(session, document)
         storage_service.save_chunks(
@@ -84,6 +84,48 @@ def test_extract_route_enqueues_background_job():
     assert saved_case.status == "extracting"
     assert saved_job is not None
     assert saved_job.status == "pending"
+
+
+def test_extract_route_requires_tinglysningsattest():
+    with get_session_ctx() as session:
+        user = create_user(session, email="extract-no-attest@example.com", password="secret123")
+        case = create_case(session, "Extraction without attest", user_id=user.id)
+        document = Document(
+            document_id="doc-akt",
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path="storage/cases/doc-akt/original.pdf",
+            document_type="akt",
+        )
+        storage_service.save_document(session, document)
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            document.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-akt-1",
+                    document_id=document.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Servitut tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=14,
+                )
+            ],
+        )
+        token = build_access_token(user)
+
+    with patch("app.api.routes.extraction.run_extraction_task.delay") as mock_delay:
+        response = client.post(
+            f"/cases/{case.case_id}/extract",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 400
+    assert "tinglysningsattest" in response.json()["error"]["message"]
+    mock_delay.assert_not_called()
 
 
 def test_get_job_status_returns_case_scoped_job():
@@ -197,3 +239,197 @@ def test_extract_route_force_rebuild_clears_previous_outputs():
             storage_service.load_attest_pipeline_state(session, case.case_id, document.document_id)
             is None
         )
+
+
+def test_extract_attest_route_enqueues_background_job():
+    with get_session_ctx() as session:
+        user = create_user(session, email="extract-attest@example.com", password="secret123")
+        case = create_case(session, "Attest extraction job", user_id=user.id)
+        attest = Document(
+            document_id="doc-attest",
+            case_id=case.case_id,
+            filename="attest.pdf",
+            file_path="storage/cases/doc-attest/original.pdf",
+            document_type="tinglysningsattest",
+        )
+        storage_service.save_document(session, attest)
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            attest.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-attest-1",
+                    document_id=attest.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Servitut tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=14,
+                )
+            ],
+        )
+        token = build_access_token(user)
+
+    with patch("app.api.routes.extraction.run_attest_extraction_task.delay") as mock_delay:
+        response = client.post(
+            f"/cases/{case.case_id}/extract-attest",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["task_type"] == "extraction_attest"
+    assert payload["status"] == "pending"
+    assert payload["result_data"]["chunk_count"] == 1
+    mock_delay.assert_called_once_with(payload["id"], case.case_id)
+
+
+def test_extract_akt_route_requires_canonical_attest_list():
+    with get_session_ctx() as session:
+        user = create_user(session, email="extract-akt-missing@example.com", password="secret123")
+        case = create_case(session, "Akt extraction job", user_id=user.id)
+        attest = Document(
+            document_id="doc-attest",
+            case_id=case.case_id,
+            filename="attest.pdf",
+            file_path="storage/cases/doc-attest/original.pdf",
+            document_type="tinglysningsattest",
+        )
+        akt = Document(
+            document_id="doc-akt",
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path="storage/cases/doc-akt/original.pdf",
+            document_type="akt",
+        )
+        storage_service.save_document(session, attest)
+        storage_service.save_document(session, akt)
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            attest.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-attest-1",
+                    document_id=attest.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Attest tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=11,
+                )
+            ],
+        )
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            akt.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-akt-1",
+                    document_id=akt.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Akt tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=8,
+                )
+            ],
+        )
+        token = build_access_token(user)
+
+    with patch("app.api.routes.extraction.run_akt_extraction_task.delay") as mock_delay:
+        response = client.post(
+            f"/cases/{case.case_id}/extract-akt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 400
+    assert "extract-attest" in response.json()["error"]["message"]
+    mock_delay.assert_not_called()
+
+
+def test_extract_akt_route_enqueues_background_job():
+    with get_session_ctx() as session:
+        user = create_user(session, email="extract-akt@example.com", password="secret123")
+        case = create_case(session, "Akt extraction queued", user_id=user.id)
+        attest = Document(
+            document_id="doc-attest",
+            case_id=case.case_id,
+            filename="attest.pdf",
+            file_path="storage/cases/doc-attest/original.pdf",
+            document_type="tinglysningsattest",
+        )
+        akt = Document(
+            document_id="doc-akt",
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path="storage/cases/doc-akt/original.pdf",
+            document_type="akt",
+        )
+        storage_service.save_document(session, attest)
+        storage_service.save_document(session, akt)
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            attest.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-attest-1",
+                    document_id=attest.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Attest tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=11,
+                )
+            ],
+        )
+        storage_service.save_chunks(
+            session,
+            case.case_id,
+            akt.document_id,
+            [
+                Chunk(
+                    chunk_id="chunk-akt-1",
+                    document_id=akt.document_id,
+                    case_id=case.case_id,
+                    page=1,
+                    text="Akt tekst",
+                    chunk_index=0,
+                    char_start=0,
+                    char_end=8,
+                )
+            ],
+        )
+        storage_service.save_canonical_list(
+            session,
+            case.case_id,
+            [
+                Servitut(
+                    easement_id="srv-1",
+                    case_id=case.case_id,
+                    source_document=attest.document_id,
+                    title="Canonical",
+                )
+            ],
+        )
+        token = build_access_token(user)
+
+    with patch("app.api.routes.extraction.run_akt_extraction_task.delay") as mock_delay:
+        response = client.post(
+            f"/cases/{case.case_id}/extract-akt",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["task_type"] == "extraction_akt"
+    assert payload["status"] == "pending"
+    assert payload["result_data"]["canonical_count"] == 1
+    mock_delay.assert_called_once_with(payload["id"], case.case_id)

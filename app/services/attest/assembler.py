@@ -22,6 +22,7 @@ _PRIORITY_PATTERN = re.compile(
     r"^\s*(?:Prioritet|Dokument)\s+(\d+)", re.IGNORECASE | re.MULTILINE
 )
 _TITLE_SKIP = {"tinglysningsattest", "servitutter", "anmærkninger", "anmerkninger"}
+_PAGE_MARKER_PATTERN = re.compile(r"^\[Side\s+\d+\]$", re.IGNORECASE)
 
 
 def _block_id(segment_ids: List[str]) -> str:
@@ -35,6 +36,9 @@ def _extract_title(text: str) -> Optional[str]:
         if len(stripped) < 4:
             continue
         if stripped.lower() in _TITLE_SKIP:
+            continue
+        # Spring side-markører over, fx "[Side 22]"
+        if _PAGE_MARKER_PATTERN.match(stripped):
             continue
         # Spring numeriske prioritetslinjer over
         if re.match(r"^\d+\s*[\.\-:]?\s*$", stripped):

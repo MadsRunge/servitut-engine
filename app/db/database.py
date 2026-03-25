@@ -6,6 +6,11 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.core.config import settings
 
+# Disse imports skal ske på modulniveau så SQLAlchemy-metadata altid er komplet,
+# uanset om create_tables() kaldes (FastAPI) eller ej (Celery-workers).
+from app.db import models as _db_models  # noqa: F401
+from app.models import user as _user_model  # noqa: F401
+
 
 @lru_cache(maxsize=4)
 def _build_engine(database_url: str):
@@ -28,10 +33,6 @@ def uses_sqlite(database_url: str | None = None) -> bool:
 
 def create_tables() -> None:
     """Opretter alle tabeller defineret i app/db/models.py (idempotent)."""
-    # Sørg for at alle tabelmodeller er importeret, inden SQLModel.metadata køres
-    from app.db import models  # noqa: F401
-    from app.models import user  # noqa: F401
-
     SQLModel.metadata.create_all(get_engine())
 
 

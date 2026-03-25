@@ -74,6 +74,36 @@ def get_document(
     return doc
 
 
+@router.delete("/{case_id}/documents/{doc_id}", status_code=204)
+def delete_document(
+    case_id: str,
+    doc_id: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    case_service.verify_case_ownership(session, case_id, current_user.id)
+    doc = storage_service.load_document(
+        session,
+        case_id,
+        doc_id,
+        owner_user_id=current_user.id,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.parse_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail="Only documents that have not started OCR can be deleted",
+        )
+
+    case_service.remove_document_from_case(
+        session,
+        case_id,
+        doc_id,
+        owner_user_id=current_user.id,
+    )
+
+
 @router.get("/{case_id}/documents/{doc_id}/attest-debug", response_model=AttestPipelineDebug)
 def get_attest_debug(
     case_id: str,

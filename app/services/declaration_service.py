@@ -29,6 +29,11 @@ from app.utils.ids import generate_declaration_id
 logger = get_logger(__name__)
 
 
+def _attest_confirmed_servitutter(servitutter: List[Servitut]) -> List[Servitut]:
+    """Defensive filter so declaration output only reflects the case's attest."""
+    return [srv for srv in servitutter if srv.confirmed_by_attest]
+
+
 def _parse_date_reference(date_ref: Optional[str]) -> date:
     """Returnerer date.max for None/ugyldige datoer → sorteres sidst."""
     if not date_ref:
@@ -123,6 +128,8 @@ def generate_declaration(
     Servitut i DB'en (scope-uafhængig version), så reviewstate er tilgængeligt
     på servitutniveau uden at hente erklæringen.
     """
+    servitutter = _attest_confirmed_servitutter(servitutter)
+
     # Annotér applies_to_primary_parcel dynamisk for det valgte målsæt
     annotated = matrikel_service.filter_servitutter_for_target(
         servitutter,

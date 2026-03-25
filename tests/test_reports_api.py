@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.db.database import create_tables, get_session_ctx, reset_engine_cache
 from app.models.case import Matrikel
 from app.models.report import Report, ReportEntry
+from app.models.servitut import Servitut
 from app.services import storage_service
 from app.services.auth_service import build_access_token, create_user
 from app.services.case_service import create_case
@@ -140,6 +141,30 @@ def test_patch_report_updates_notes_only():
     # Entries should be unchanged
     assert len(patched["entries"]) == 2
     assert patched["entries"][0]["title"] == "Vejret"
+
+
+def test_create_report_rejects_when_only_non_attest_servitutter_exist():
+    case, headers = _create_case_with_headers("rep-unconfirmed@example.com", "Kun i akt")
+
+    with get_session_ctx() as session:
+        storage_service.save_servitut(
+            session,
+            Servitut(
+                easement_id="srv-unconfirmed",
+                case_id=case.case_id,
+                source_document="doc-akt",
+                title="Kun i akt",
+                confirmed_by_attest=False,
+            ),
+        )
+
+    response = client.post(
+        f"/cases/{case.case_id}/reports",
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "No servitutter found — run extraction first"
 
 
 def test_patch_report_not_found():

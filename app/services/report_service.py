@@ -19,6 +19,11 @@ from app.utils.ids import generate_report_id
 logger = get_logger(__name__)
 
 
+def _attest_confirmed_servitutter(servitutter: List[Servitut]) -> List[Servitut]:
+    """Defensive filter so reports only describe attest-backed servitutter."""
+    return [srv for srv in servitutter if srv.confirmed_by_attest]
+
+
 def _resolve_report_provider() -> str | None:
     if settings.REPORT_LLM_PROVIDER.strip():
         return settings.REPORT_LLM_PROVIDER.strip()
@@ -174,6 +179,7 @@ def generate_report(
     prompt_template = _load_prompt()
     target_parcel_numbers = target_parcel_numbers or []
     available_parcel_numbers = available_parcel_numbers or []
+    servitutter = _attest_confirmed_servitutter(servitutter)
     dated_servitutter = _filter_servitutter_by_as_of_date(servitutter, as_of_date)
     filtered_servitutter = filter_servitutter_for_target(
         dated_servitutter,

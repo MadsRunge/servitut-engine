@@ -39,6 +39,27 @@ def _update_job(
         return job
 
 
+def _job_progress_callback(case_id: str, job_id: str):
+    def progress_callback(event: dict[str, Any]) -> None:
+        _update_job(
+            case_id,
+            job_id,
+            status="processing",
+            result_data={
+                "message": event.get("message"),
+                "progress": event.get("progress"),
+                "stage": event.get("stage"),
+                "source_type": event.get("source_type"),
+                "document_id": event.get("doc_id"),
+                "worker": event.get("worker"),
+                "servitut_count": event.get("servitut_count"),
+                "last_event": event,
+            },
+        )
+
+    return progress_callback
+
+
 @celery_app.task(name="app.worker.tasks.run_ocr_task")
 def run_ocr_task(job_id: str, case_id: str, doc_id: str) -> dict[str, Any]:
     _update_job(
@@ -121,23 +142,7 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
     try:
         with get_session_ctx() as session:
             case_service.update_case_status(session, case_id, "extracting")
-
-        def progress_callback(event: dict[str, Any]) -> None:
-            _update_job(
-                case_id,
-                job_id,
-                status="processing",
-                result_data={
-                    "message": event.get("message"),
-                    "progress": event.get("progress"),
-                    "stage": event.get("stage"),
-                    "source_type": event.get("source_type"),
-                    "document_id": event.get("doc_id"),
-                    "worker": event.get("worker"),
-                    "servitut_count": event.get("servitut_count"),
-                    "last_event": event,
-                },
-            )
+        progress_callback = _job_progress_callback(case_id, job_id)
 
         with get_session_ctx() as session:
             all_chunks = storage_service.load_all_chunks(session, case_id)
@@ -153,8 +158,7 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
                 observability_run_id=job_id,
             )
 
-            for servitut in servitutter:
-                storage_service.save_servitut(session, servitut)
+            storage_service.replace_servitutter(session, case_id, servitutter)
 
             case_service.update_case_status(session, case_id, "done")
             payload = {
@@ -205,4 +209,165 @@ def run_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
             },
         )
         logger.exception("Extraction job failed for case=%s", case_id)
+        raise
+
+
+@celery_app.task(name="app.worker.tasks.run_attest_extraction_task")
+def run_attest_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
+    all_chunks_count = 0
+    _update_job(
+        case_id,
+        job_id,
+        status="processing",
+        result_data={"message": "Attest extraction job started"},
+    )
+
+    try:
+        with get_session_ctx() as session:
+            case_service.update_case_status(session, case_id, "extracting")
+        progress_callback = _job_progress_callback(case_id, job_id)
+
+        with get_session_ctx() as session:
+            all_chunks = storage_service.load_all_chunks(session, case_id)
+            all_chunks_count = len(all_chunks)
+            if not all_chunks:
+                raise ValueError("No chunks found — parse documents first")
+
+            servitutter = extraction_service.extract_attest_servitutter(
+                session,
+                case_id,
+                progress_callback=progress_callback,
+            )
+
+            storage_service.replace_servitutter(session, case_id, servitutter)
+            case_service.update_case_status(session, case_id, "done")
+            payload = {
+                "message": "Attest extraction job completed",
+                "servitut_count": len(servitutter),
+            }
+
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_attest_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "completed",
+                "chunk_count": all_chunks_count,
+                "servitut_count": len(servitutter),
+            },
+            run_id=f"{job_id}_job",
+        )
+        payload["observability_file"] = str(observability_path)
+
+        _update_job(case_id, job_id, status="completed", result_data=payload)
+        return payload
+    except Exception as exc:
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_attest_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "failed",
+                "chunk_count": all_chunks_count,
+                "error": str(exc),
+            },
+            run_id=f"{job_id}_job_failed",
+        )
+        with get_session_ctx() as session:
+            case_service.update_case_status(session, case_id, "error")
+
+        _update_job(
+            case_id,
+            job_id,
+            status="failed",
+            result_data={
+                "message": "Attest extraction job failed",
+                "error": str(exc),
+                "observability_file": str(observability_path),
+            },
+        )
+        logger.exception("Attest extraction job failed for case=%s", case_id)
+        raise
+
+
+@celery_app.task(name="app.worker.tasks.run_akt_extraction_task")
+def run_akt_extraction_task(job_id: str, case_id: str) -> dict[str, Any]:
+    all_chunks_count = 0
+    _update_job(
+        case_id,
+        job_id,
+        status="processing",
+        result_data={"message": "Akt extraction job started"},
+    )
+
+    try:
+        with get_session_ctx() as session:
+            case_service.update_case_status(session, case_id, "extracting")
+        progress_callback = _job_progress_callback(case_id, job_id)
+
+        with get_session_ctx() as session:
+            all_chunks = storage_service.load_all_chunks(session, case_id)
+            all_chunks_count = len(all_chunks)
+            if not all_chunks:
+                raise ValueError("No chunks found — parse documents first")
+
+            servitutter = extraction_service.extract_akt_servitutter(
+                session,
+                case_id,
+                progress_callback=progress_callback,
+                observability_run_id=job_id,
+            )
+
+            storage_service.replace_servitutter(session, case_id, servitutter)
+            case_service.update_case_status(session, case_id, "done")
+            payload = {
+                "message": "Akt extraction job completed",
+                "servitut_count": len(servitutter),
+            }
+
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_akt_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "completed",
+                "chunk_count": all_chunks_count,
+                "servitut_count": len(servitutter),
+            },
+            run_id=f"{job_id}_job",
+        )
+        payload["observability_file"] = str(observability_path)
+
+        _update_job(case_id, job_id, status="completed", result_data=payload)
+        return payload
+    except Exception as exc:
+        observability_path = pipeline_observability.write_extraction_run_summary(
+            case_id,
+            {
+                "pipeline": "extraction_akt_job",
+                "case_id": case_id,
+                "job_id": job_id,
+                "status": "failed",
+                "chunk_count": all_chunks_count,
+                "error": str(exc),
+            },
+            run_id=f"{job_id}_job_failed",
+        )
+        with get_session_ctx() as session:
+            case_service.update_case_status(session, case_id, "error")
+
+        _update_job(
+            case_id,
+            job_id,
+            status="failed",
+            result_data={
+                "message": "Akt extraction job failed",
+                "error": str(exc),
+                "observability_file": str(observability_path),
+            },
+        )
+        logger.exception("Akt extraction job failed for case=%s", case_id)
         raise

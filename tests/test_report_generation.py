@@ -201,6 +201,25 @@ def test_report_includes_all_servitutter_with_scope_annotation():
     assert "Servitut for anden matrikel" in prompt
 
 
+def test_report_excludes_non_attest_servitutter_from_prompt():
+    confirmed = make_mock_servitut(1)
+    confirmed.title = "Bekræftet servitut"
+    unconfirmed = make_mock_servitut(2)
+    unconfirmed.title = "Kun i akt"
+    unconfirmed.confirmed_by_attest = False
+
+    with patch("app.services.report_service.generate_text", return_value=MOCK_API_RESPONSE) as mock_generate_text:
+        call_generate_report(
+            [confirmed, unconfirmed],
+            make_mock_chunks(),
+            "case-test",
+        )
+
+    prompt = mock_generate_text.call_args[0][0]
+    assert "Bekræftet servitut" in prompt
+    assert "Kun i akt" not in prompt
+
+
 def test_report_filters_future_servitutter_when_as_of_date_is_set():
     historical = make_mock_servitut(1)
     historical.title = "Historisk servitut"

@@ -65,6 +65,66 @@ def test_upload_document_infers_tinglysningsattest_from_filename(tmp_path, monke
     assert payload["document_type"] == "tinglysningsattest"
 
 
+def test_delete_document_removes_pending_document(tmp_path, monkeypatch):
+    with get_session_ctx() as session:
+        user = create_user(session, email="delete-doc@example.com", password="secret123")
+        case = create_case(session, "API delete document", user_id=user.id)
+        doc_id = "doc-delete"
+        pdf_path = storage_service.get_document_pdf_path(case.case_id, doc_id)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+        doc = Document(
+            document_id=doc_id,
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path=str(pdf_path),
+            document_type="akt",
+            parse_status="pending",
+        )
+        storage_service.save_document(session, doc)
+        token = build_access_token(user)
+
+    response = client.delete(
+        f"/cases/{case.case_id}/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 204
+
+    with get_session_ctx() as session:
+        saved_doc = storage_service.load_document(session, case.case_id, doc_id)
+
+    assert saved_doc is None
+    assert not pdf_path.exists()
+
+
+def test_delete_document_rejects_ocr_started_document(tmp_path, monkeypatch):
+    with get_session_ctx() as session:
+        user = create_user(session, email="delete-doc-locked@example.com", password="secret123")
+        case = create_case(session, "API delete locked document", user_id=user.id)
+        doc_id = "doc-locked"
+        pdf_path = storage_service.get_document_pdf_path(case.case_id, doc_id)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(b"%PDF-1.4 fake")
+        doc = Document(
+            document_id=doc_id,
+            case_id=case.case_id,
+            filename="akt.pdf",
+            file_path=str(pdf_path),
+            document_type="akt",
+            parse_status="ocr_done",
+        )
+        storage_service.save_document(session, doc)
+        token = build_access_token(user)
+
+    response = client.delete(
+        f"/cases/{case.case_id}/documents/{doc_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+
+
 def test_run_ocr_route_uses_shared_pipeline(tmp_path, monkeypatch):
     with get_session_ctx() as session:
         user = create_user(session, email="ocr@example.com", password="secret123")

@@ -5,7 +5,7 @@ from typing import Any, Literal
 from sqlmodel import SQLModel
 
 
-JobTaskType = Literal["ocr", "extraction"]
+JobTaskType = Literal["ocr", "extraction", "extraction_attest", "extraction_akt"]
 JobStatus = Literal["pending", "processing", "completed", "failed"]
 
 
