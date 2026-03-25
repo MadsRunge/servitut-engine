@@ -26,7 +26,7 @@ from app.services.llm_service import generate_text
 
 logger = get_logger(__name__)
 
-ATTEST_PIPELINE_VERSION = 1
+ATTEST_PIPELINE_VERSION = 2
 ATTEST_MAX_SEGMENT_CHARS = 9000
 ATTEST_MAX_SEGMENT_PAGES = 4
 ATTEST_SEGMENT_OVERLAP_PAGES = 1
@@ -464,150 +464,124 @@ def extract_canonical_from_attest_segments(
     case_id: str,
     progress_callback: Optional[ProgressCallback] = None,
 ) -> list[Servitut]:
-    """Udtræk canonical liste fra tinglysningsattest via deterministisk pipeline.
+    """Udtræk canonical liste fra tinglysningsattest via ny clean extraction path.
 
-    Pipeline v2 (erstatter LLM-per-segment):
-      1. Byg/genindlæs segmenter (page-window)
-      2. Klassificér block-types deterministisk
-      3. Assembl DeclarationBlock[]
-      4. Fan-out til RegistrationEntry[] (Servitut)
-      5. Merge/dedup på date_reference
+    Ny path (erstatter gammel classify → assemble → fanout pipeline):
+      1. Tekst-niveau sektion-split (char-position)
+      2. Deterministisk candidate block-splitting
+      3. LLM semantic extraction per candidate block
+      4. Merge/dedup
     """
-    from app.services.attest.segmenter import classify_segment_block_type
-    from app.services.attest.assembler import assemble_declaration_blocks
-    from app.services.attest.fanout import fan_out_registration_entries
+    from app.services.attest.attest_extractor import (
+        ServitutterSectionNotFoundError,
+        merge_candidate_servitutter,
+        run_attest_extraction,
+    )
 
     all_servitutter: list[Servitut] = []
 
     for doc_id, chunk_list in attest_by_doc.items():
-        state = _load_or_build_pipeline_state(
-            session,
-            case_id,
-            doc_id,
-            chunk_list,
-            progress_callback=progress_callback,
+        _emit_progress(
+            progress_callback,
+            doc_id=doc_id,
+            source_type="tinglysningsattest",
+            stage="extracting_attest",
+            progress=0.1,
+            message="Starter ny attest extraction path",
         )
-        if not state.segments:
+        try:
+            doc_servitutter = run_attest_extraction(chunk_list, case_id, doc_id)
+        except ServitutterSectionNotFoundError as exc:
+            if session is not None:
+                storage_service.save_attest_pipeline_state(
+                    session,
+                    case_id,
+                    doc_id,
+                    AttestPipelineState(
+                        version=ATTEST_PIPELINE_VERSION,
+                        case_id=case_id,
+                        document_id=doc_id,
+                        source_signature=_source_signature(chunk_list),
+                        page_count=len({chunk.page for chunk in chunk_list}),
+                        segment_strategy="attest_candidate_v1",
+                        unresolved_block_ids=["servitutter_section_not_found"],
+                        updated_at=datetime.utcnow(),
+                    ),
+                )
+            logger.error(
+                "case=%s doc=%s: Servitutter-sektion ikke fundet — springer over. %s",
+                case_id,
+                doc_id,
+                exc,
+            )
             _emit_progress(
                 progress_callback,
                 doc_id=doc_id,
                 source_type="tinglysningsattest",
                 stage="completed",
                 progress=1.0,
-                message="Ingen segmenter fundet i attesten",
+                message=f"Fejl: {exc}",
+                servitut_count=0,
+            )
+            continue
+        except Exception as exc:
+            if session is not None:
+                storage_service.save_attest_pipeline_state(
+                    session,
+                    case_id,
+                    doc_id,
+                    AttestPipelineState(
+                        version=ATTEST_PIPELINE_VERSION,
+                        case_id=case_id,
+                        document_id=doc_id,
+                        source_signature=_source_signature(chunk_list),
+                        page_count=len({chunk.page for chunk in chunk_list}),
+                        segment_strategy="attest_candidate_v1",
+                        unresolved_block_ids=["attest_extraction_failed"],
+                        updated_at=datetime.utcnow(),
+                    ),
+                )
+            logger.error(
+                "case=%s doc=%s: uventet fejl i attest extraction: %s",
+                case_id,
+                doc_id,
+                exc,
+            )
+            _emit_progress(
+                progress_callback,
+                doc_id=doc_id,
+                source_type="tinglysningsattest",
+                stage="completed",
+                progress=1.0,
+                message=f"Fejl: {exc}",
                 servitut_count=0,
             )
             continue
 
-        total_segments = len(state.segments)
-
-        # --- Trin 1: Klassificér block-types (deterministisk) ---
-        _emit_progress(
-            progress_callback,
-            doc_id=doc_id,
-            source_type="tinglysningsattest",
-            stage="classifying_blocks",
-            progress=0.25,
-            message=f"Klassificerer {total_segments} segmenter",
-            segment_count=total_segments,
-        )
-        unknown_count = 0
-        for segment in state.segments:
-            if segment.block_type == "unknown":
-                segment.block_type = classify_segment_block_type(segment.text)
-                if segment.block_type == "unknown":
-                    unknown_count += 1
-
-        if unknown_count:
-            logger.info(
-                "case=%s doc=%s: %d/%d segmenter forbliver UNKNOWN efter klassificering",
+        if session is not None:
+            storage_service.save_attest_pipeline_state(
+                session,
                 case_id,
                 doc_id,
-                unknown_count,
-                total_segments,
+                AttestPipelineState(
+                    version=ATTEST_PIPELINE_VERSION,
+                    case_id=case_id,
+                    document_id=doc_id,
+                    source_signature=_source_signature(chunk_list),
+                    page_count=len({chunk.page for chunk in chunk_list}),
+                    segment_strategy="attest_candidate_v1",
+                    updated_at=datetime.utcnow(),
+                ),
             )
-
-        # --- Trin 2: Assembl DeclarationBlock[] ---
-        _emit_progress(
-            progress_callback,
-            doc_id=doc_id,
-            source_type="tinglysningsattest",
-            stage="assembling_blocks",
-            progress=0.40,
-            message="Assemblerer deklarationsblokke",
-            segment_count=total_segments,
-        )
-        if not state.declaration_blocks:
-            state.declaration_blocks = assemble_declaration_blocks(
-                state.segments, case_id, doc_id
-            )
-            state.updated_at = datetime.utcnow()
-            storage_service.save_attest_pipeline_state(session, case_id, doc_id, state)
-
-        block_count = len(state.declaration_blocks)
-        logger.info(
-            "case=%s doc=%s: %d blokke assembleret fra %d segmenter",
-            case_id,
-            doc_id,
-            block_count,
-            total_segments,
-        )
-
-        # --- Trin 3: Fan-out til RegistrationEntry[] ---
-        _emit_progress(
-            progress_callback,
-            doc_id=doc_id,
-            source_type="tinglysningsattest",
-            stage="fanout_entries",
-            progress=0.60,
-            message=f"Fan-out fra {block_count} blokke",
-            segment_count=total_segments,
-        )
-        doc_servitutter: list[Servitut] = []
-        unresolved: list[str] = []
-        for block in state.declaration_blocks:
-            entries, resolved = fan_out_registration_entries(block, case_id)
-            if resolved:
-                doc_servitutter.extend(entries)
-            else:
-                unresolved.append(block.block_id)
-
-        if unresolved:
-            state.unresolved_block_ids = unresolved
-            state.updated_at = datetime.utcnow()
-            storage_service.save_attest_pipeline_state(session, case_id, doc_id, state)
-            logger.warning(
-                "case=%s doc=%s: %d uafklarede blokke (ingen gyldige date_references)",
-                case_id,
-                doc_id,
-                len(unresolved),
-            )
-
-        # --- Trin 4: Merge/dedup ---
-        _emit_progress(
-            progress_callback,
-            doc_id=doc_id,
-            source_type="tinglysningsattest",
-            stage="merging_attest_segments",
-            progress=0.90,
-            message=f"Fletter {len(doc_servitutter)} entries",
-            segment_count=total_segments,
-        )
-        merged_doc = merge_attest_servitutter(doc_servitutter)
-        all_servitutter.extend(merged_doc)
-
+        all_servitutter.extend(doc_servitutter)
         _emit_progress(
             progress_callback,
             doc_id=doc_id,
             source_type="tinglysningsattest",
             stage="completed",
             progress=1.0,
-            message=(
-                f"Færdig: {len(merged_doc)} servitut(ter) fra {block_count} blokke"
-                + (f" ({len(unresolved)} uafklarede)" if unresolved else "")
-            ),
-            servitut_count=len(merged_doc),
-            segment_count=total_segments,
+            message=f"Færdig: {len(doc_servitutter)} servitut(ter)",
+            servitut_count=len(doc_servitutter),
         )
 
-    return merge_attest_servitutter(all_servitutter)
+    return merge_candidate_servitutter(all_servitutter)

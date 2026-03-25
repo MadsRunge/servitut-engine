@@ -10,6 +10,7 @@ from app.core.logging import get_logger
 from app.models.chunk import Chunk
 from app.models.servitut import Evidence, Servitut
 from app.services.extraction.normalization import (
+    coerce_optional_int,
     coerce_optional_str,
     coerce_str_list,
     parse_registered_at,
@@ -154,11 +155,12 @@ def _build_servitutter_from_items(
         scope_source = coerce_optional_str(item.get("scope_source")) or _scope_source_for_type(
             source_type
         )
+        priority = coerce_optional_int(item.get("priority"))
         servitut = Servitut(
             easement_id=generate_servitut_id(),
             case_id=case_id,
             source_document=doc_id,
-            priority=priority_offset + i,
+            priority=priority if priority is not None else priority_offset + i,
             date_reference=date_reference,
             registered_at=parse_registered_at(item.get("registered_at"), date_reference),
             archive_number=coerce_optional_str(item.get("archive_number")),

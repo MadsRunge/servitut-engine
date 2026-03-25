@@ -77,6 +77,36 @@ class AttestPipelineState(SQLModel):
     unresolved_block_ids: List[str] = Field(default_factory=list)
 
 
+class AttestCandidateBlock(BaseModel):
+    """Atomisk candidate-enhed fra Servitutter-sektionen.
+
+    Én block = én potentiel servitutpost i Servitutter-sektionen.
+    Tekst-udsnit der sendes til LLM — aldrig persisteret.
+    """
+    block_id: str                           # sha256(doc_id:char_start)[:12]
+    case_id: str
+    document_id: str
+    text: str                               # Rå tekst for denne candidate entry
+    page_numbers: List[int]                 # Hvilke sider blokken dækker
+    candidate_date_references: List[str]    # Forhåndsscreenede dato-refs
+    candidate_archive_numbers: List[str]    # Forhåndsscreenede aktnumre
+
+
+class AttestSectionType(str, Enum):
+    ADKOMSTER   = "adkomster"
+    HAEFTELSER  = "haeftelser"
+    SERVITUTTER = "servitutter"
+    OEVRIGE     = "oevrige_oplysninger"
+    UNKNOWN     = "unknown"
+
+
+class AttestSection(BaseModel):
+    """Transient model — aldrig persisteret. Kun i-memory under pipeline-kørsel."""
+    section_type: AttestSectionType
+    start_page: int
+    end_page: Optional[int] = None  # None = løber til slutningen af dokumentet
+
+
 class AttestDebugSegment(BaseModel):
     segment_id: str
     segment_index: int

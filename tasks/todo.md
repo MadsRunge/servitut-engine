@@ -1,5 +1,59 @@
 ## Local test stack doc
 
+## Clean attest extraction completion plan
+
+- [x] Kortlaeg de konkrete huller i den nye attest-path: prompt, prioritet, evidence og legacy debug/state
+- [x] Implementer prompt-wiring, bevar attesteret prioritet og fix evidence/provenance i den nye extractor
+- [x] Fjern eller afkobl resterende legacy-attestkode fra aktiv extraction-path hvor det er nødvendigt
+- [x] Koer maalrettede tests og backend-suiten, og noter review/resultat
+
+## Clean attest extraction completion review
+
+- Den nye attest-path bruger nu sin egen prompt via `_load_prompt("attest_candidate")` og falder ikke tilbage til `extract_servitut.txt`.
+- Candidate-block extraction injicerer nu deterministiske defaults for `priority`, `date_reference` og `archive_number`, så LLM-output ikke taber attestens egne nøglefelter.
+- Den aktive attest-path bruger nu `merge_candidate_servitutter()` i stedet for den gamle merge-logik, og `priority` renummereres ikke længere til intern rækkefølge.
+- Evidence patcher nu faktisk tilbage på de genererede `Servitut`-objekter i den nye extractor.
+- Pipeline-wrapperen gemmer nu en ærlig minimal state med `segment_strategy = attest_candidate_v1`, så den aktive extraction-path ikke efterlader gammel page-window-state som sandhed.
+- Den overflødige `section_parser`-gren blev fjernet fra worktree for at undgå to konkurrerende sektion-logikker.
+
+Verificering:
+- `UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/test_attest_extractor.py tests/test_extraction_service.py`
+  - `58 passed`
+- `UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q`
+  - `289 passed, 6 warnings`
+
+## Reset all cases extraction plan
+
+- [x] Identificer alle cases i DB og deres nuværende extraction-state
+- [x] Nulstil extraction-output for alle cases uden at slette OCR-data
+- [x] Verificer status, servitutter og attest-state pr. case efter reset
+
+## Reset all cases extraction review
+
+- Nulstillede extraction-output for begge lokale cases via backendens `reset_case_extraction_outputs(..., clear_attest_pipeline=True)`.
+- OCR-data blev bevaret i begge cases; kun canonical/extraction-state blev ryddet.
+- Normaliserede bagefter JSON `null` til rigtig SQL `NULL` for `cases.canonical_list`, `cases.scoring_results` og `documents.attest_pipeline_state`, så state ikke stod halvryddet.
+
+Efter reset:
+- `case-4aa8d93e`
+  - status: `ocr_done`
+  - docs: `3/3 ocr_done`
+  - chunks: `171`
+  - servitutter: `0`
+  - reports: `0`
+  - declarations: `0`
+  - attest pipeline state: `0` dokumenter
+  - canonical_list: `NULL`
+- `case-7f345dcc`
+  - status: `ocr_done`
+  - docs: `123/123 ocr_done`
+  - chunks: `8287`
+  - servitutter: `0`
+  - reports: `0`
+  - declarations: `0`
+  - attest pipeline state: `0` dokumenter
+  - canonical_list: `NULL`
+
 - [x] Skriv en kort docs-fil med den lokale startup-rækkefølge for backend, Redis, worker og frontend
 
 ## Local test stack review

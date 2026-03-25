@@ -13,6 +13,24 @@ def coerce_optional_str(value: object) -> Optional[str]:
     return text or None
 
 
+def coerce_optional_int(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = coerce_optional_str(value)
+    if text is None:
+        return None
+    if not re.fullmatch(r"\d+", text):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def coerce_str_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip().lower() for item in value if str(item).strip()]

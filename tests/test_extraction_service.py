@@ -590,55 +590,24 @@ def test_merge_attest_servitutter_deduplicates_overlapping_segments():
 
 
 def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypatch):
-    """Pipeline v2: declaration_blocks i state bruges som cache — assembler kaldes ikke igen."""
-    chunk = make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret")
-    block = DeclarationBlock(
-        block_id="aabbccddeeff",
-        case_id="case-test",
-        document_id="doc-attest",
-        page_start=1,
-        page_end=1,
-        source_segment_ids=["doc-attest-segment-0000"],
-        status="aktiv",
-        fanout_date_refs=["09.02.1957-490-40"],
-    )
-    state = AttestPipelineState(
-        case_id="case-test",
-        document_id="doc-attest",
-        source_signature=attest_pipeline._source_signature([chunk]),
-        segments=[
-            AttestSegment(
-                segment_id="doc-attest-segment-0000",
-                case_id="case-test",
-                document_id="doc-attest",
-                segment_index=0,
-                page_start=1,
-                page_end=1,
-                page_numbers=[1],
-                text="[Side 1]\n09.02.1957-490-40 vejret",
-                text_hash="hash",
-                block_type=AttestBlockType.DECLARATION_CONTINUATION,
-            )
-        ],
-        declaration_blocks=[block],
-    )
+    """Ny path: run_attest_extraction kaldes per dokument og resultater sammensættes."""
+    from app.models.servitut import Servitut
+    from app.utils.ids import generate_servitut_id
+    chunk = make_chunk("doc-attest", page=1, text="Servitutter\nDokument:\n09.02.1957-490-40 vejret")
     events = []
 
-    monkeypatch.setattr(
-        attest_pipeline.storage_service,
-        "load_attest_pipeline_state",
-        lambda session, case_id, doc_id: state,
+    mock_servitut = Servitut(
+        easement_id=generate_servitut_id(),
+        case_id="case-test",
+        source_document="doc-attest",
+        priority=0,
+        date_reference="19570209-490-40",
+        confirmed_by_attest=True,
     )
+
     monkeypatch.setattr(
-        attest_pipeline.storage_service,
-        "save_attest_pipeline_state",
-        lambda session, case_id, doc_id, current_state: None,
-    )
-    # Deterministic pipeline — LLM must not be called
-    monkeypatch.setattr(
-        attest_pipeline,
-        "generate_text",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("LLM should not be called")),
+        "app.services.attest.attest_extractor.run_attest_extraction",
+        lambda chunks, case_id, doc_id, **kwargs: [mock_servitut],
     )
 
     result = attest_pipeline.extract_canonical_from_attest_segments(
@@ -649,147 +618,142 @@ def test_extract_canonical_from_attest_segments_reuses_completed_cache(monkeypat
     )
 
     assert len(result) == 1
-    # date_reference er normaliseret af fanout.py: DD.MM.YYYY-NNN → YYYYMMDD-NNN
     assert result[0].date_reference == "19570209-490-40"
+    # Progress events emitted for the doc
     stages = [event["stage"] for event in events]
-    assert stages == [
-        "indexed_attest",
-        "classifying_blocks",
-        "assembling_blocks",
-        "fanout_entries",
-        "merging_attest_segments",
-        "completed",
-    ]
+    assert "extracting_attest" in stages
+    assert "completed" in stages
 
 
 def test_extract_canonical_from_attest_segments_persists_segment_results(monkeypatch):
-    """Pipeline v2: declaration_blocks persisteres i state efter assembly."""
-    chunks = [
-        make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
-        make_chunk("doc-attest", page=2, text="10.02.1957-491-40 ledning"),
-    ]
-    built_segments = [
-        AttestSegment(
-            segment_id="doc-attest-segment-0000",
-            case_id="case-test",
-            document_id="doc-attest",
-            segment_index=0,
-            page_start=1,
-            page_end=1,
-            page_numbers=[1],
-            text="[Side 1]\n09.02.1957-490-40 vejret",
-            text_hash="hash-1",
-        ),
-        AttestSegment(
-            segment_id="doc-attest-segment-0001",
-            case_id="case-test",
-            document_id="doc-attest",
-            segment_index=1,
-            page_start=2,
-            page_end=2,
-            page_numbers=[2],
-            text="[Side 2]\n10.02.1957-491-40 ledning",
-            text_hash="hash-2",
-        ),
-    ]
-    saved_states = []
-    state_store = {"value": None}
+    """Ny path: resultater fra to dokumenter sammensættes og dedupliceres."""
+    from app.models.servitut import Servitut
+    from app.utils.ids import generate_servitut_id
+
+    chunks_doc1 = [make_chunk("doc-attest-1", page=1, text="Servitutter\nDokument:\n09.02.1957-490-40")]
+    chunks_doc2 = [make_chunk("doc-attest-2", page=1, text="Servitutter\nDokument:\n10.02.1957-491-40")]
+
+    def mock_run_attest(chunks, case_id, doc_id, **kwargs):
+        page1_text = chunks[0].text if chunks else ""
+        if "490-40" in page1_text:
+            return [Servitut(
+                easement_id=generate_servitut_id(),
+                case_id=case_id,
+                source_document=doc_id,
+                priority=0,
+                date_reference="19570209-490-40",
+                confirmed_by_attest=True,
+            )]
+        return [Servitut(
+            easement_id=generate_servitut_id(),
+            case_id=case_id,
+            source_document=doc_id,
+            priority=0,
+            date_reference="19570210-491-40",
+            confirmed_by_attest=True,
+        )]
 
     monkeypatch.setattr(
-        attest_pipeline.storage_service,
-        "load_attest_pipeline_state",
-        lambda session, case_id, doc_id: state_store["value"],
+        "app.services.attest.attest_extractor.run_attest_extraction",
+        mock_run_attest,
     )
-
-    def _save_state(session, case_id, doc_id, state):
-        state_store["value"] = state
-        saved_states.append(state.model_copy(deep=True))
-
-    monkeypatch.setattr(attest_pipeline.storage_service, "save_attest_pipeline_state", _save_state)
-    monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
 
     result = attest_pipeline.extract_canonical_from_attest_segments(
         None,
-        {"doc-attest": chunks},
+        {"doc-attest-1": chunks_doc1, "doc-attest-2": chunks_doc2},
         "case-test",
     )
 
-    # Begge date_references er normaliseret
     result_refs = sorted(s.date_reference for s in result)
     assert result_refs == ["19570209-490-40", "19570210-491-40"]
 
-    # declaration_blocks er persisteret i state
-    assert state_store["value"].declaration_blocks
-    # State er gemt mindst én gang (segmentbygge + block-assembly)
-    assert len(saved_states) >= 2
-
 
 def test_extract_canonical_from_attest_segments_tracks_unresolved_blocks(monkeypatch):
-    """Pipeline v2: blokke uden gyldige date_references registreres som uafklarede.
+    """Ny path: ServitutterSectionNotFoundError for ét dokument springer det over.
 
-    Den nye pipeline kaster IKKE AttestPipelineIncompleteError — unresolved blocks
-    registreres i state.unresolved_block_ids og pipelinen fortsætter.
+    Pipelinen fortsætter og returnerer hvad den kan fra de resterende dokumenter.
     """
-    chunks = [
-        make_chunk("doc-attest", page=1, text="09.02.1957-490-40 vejret"),
-        make_chunk("doc-attest", page=2, text="ingen dato her"),
-    ]
-    built_segments = [
-        AttestSegment(
-            segment_id="doc-attest-segment-0000",
-            case_id="case-test",
-            document_id="doc-attest",
-            segment_index=0,
-            page_start=1,
-            page_end=1,
-            page_numbers=[1],
-            text="[Side 1]\n09.02.1957-490-40 vejret",
-            text_hash="hash-1",
-        ),
-        AttestSegment(
-            segment_id="doc-attest-segment-0001",
-            case_id="case-test",
-            document_id="doc-attest",
-            segment_index=1,
-            page_start=2,
-            page_end=2,
-            page_numbers=[2],
-            # DECLARATION_START-segment uden date_reference → egen blok, uafklaret
-            text="Prioritet 2\nGenerel bestemmelse uden tinglysningsdato",
-            text_hash="hash-2",
-        ),
-    ]
-    state_store = {"value": None}
+    from app.models.servitut import Servitut
+    from app.utils.ids import generate_servitut_id
+    from app.services.attest.attest_extractor import ServitutterSectionNotFoundError
+
+    chunks_good = [make_chunk("doc-ok", page=1, text="Servitutter\nDokument:\n09.02.1957-490-40")]
+    chunks_bad = [make_chunk("doc-bad", page=1, text="Adkomster\nHæftelser\nIngen servitutter")]
     events = []
 
-    monkeypatch.setattr(
-        attest_pipeline.storage_service,
-        "load_attest_pipeline_state",
-        lambda session, case_id, doc_id: state_store["value"],
-    )
-    monkeypatch.setattr(
-        attest_pipeline.storage_service,
-        "save_attest_pipeline_state",
-        lambda session, case_id, doc_id, state: state_store.__setitem__("value", state.model_copy(deep=True)),
-    )
-    monkeypatch.setattr(attest_pipeline, "build_attest_segments", lambda *args, **kwargs: built_segments)
+    def mock_run_attest(chunks, case_id, doc_id, **kwargs):
+        if doc_id == "doc-bad":
+            raise ServitutterSectionNotFoundError(["adkomster", "hæftelser"])
+        return [Servitut(
+            easement_id=generate_servitut_id(),
+            case_id=case_id,
+            source_document=doc_id,
+            priority=0,
+            date_reference="19570209-490-40",
+            confirmed_by_attest=True,
+        )]
 
-    # Ingen exception — pipelinen fortsætter og returnerer hvad den kan
+    monkeypatch.setattr(
+        "app.services.attest.attest_extractor.run_attest_extraction",
+        mock_run_attest,
+    )
+
+    # Ingen exception kastes ud — pipelinen fortsætter
     result = attest_pipeline.extract_canonical_from_attest_segments(
         None,
-        {"doc-attest": chunks},
+        {"doc-ok": chunks_good, "doc-bad": chunks_bad},
         "case-test",
         progress_callback=events.append,
     )
 
-    # Kun segment 0 har en gyldig date_reference → 1 servitut
     assert len(result) == 1
     assert result[0].date_reference == "19570209-490-40"
 
-    # Uafklarede blokke er registreret i state
-    final_state = state_store["value"]
-    assert final_state is not None
-    assert len(final_state.unresolved_block_ids) >= 1
+    # doc-bad producerer et "completed" event med fejl-besked
+    completed_events = [e for e in events if e["stage"] == "completed"]
+    assert any("doc-bad" == e.get("doc_id") for e in completed_events)
+
+
+def test_extract_canonical_from_attest_segments_saves_clean_state(monkeypatch):
+    from app.models.servitut import Servitut
+    from app.utils.ids import generate_servitut_id
+
+    saved_states = []
+    session = object()
+    chunk = make_chunk("doc-attest", page=6, text="Servitutter\nDokument:\n09.02.1957-490-40")
+
+    monkeypatch.setattr(
+        "app.services.attest.attest_extractor.run_attest_extraction",
+        lambda chunks, case_id, doc_id, **kwargs: [
+            Servitut(
+                easement_id=generate_servitut_id(),
+                case_id=case_id,
+                source_document=doc_id,
+                priority=3,
+                date_reference="19570209-490-40",
+                confirmed_by_attest=True,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.attest_pipeline.storage_service.save_attest_pipeline_state",
+        lambda session_obj, case_id, doc_id, state: saved_states.append((session_obj, case_id, doc_id, state)),
+    )
+
+    result = attest_pipeline.extract_canonical_from_attest_segments(
+        session,
+        {"doc-attest": [chunk]},
+        "case-test",
+    )
+
+    assert len(result) == 1
+    assert saved_states
+    _, saved_case_id, saved_doc_id, state = saved_states[-1]
+    assert saved_case_id == "case-test"
+    assert saved_doc_id == "doc-attest"
+    assert state.segment_strategy == "attest_candidate_v1"
+    assert state.segments == []
+    assert state.declaration_blocks == []
 
 
 def test_extract_servitutter_does_not_save_partial_canonical_cache(monkeypatch):
