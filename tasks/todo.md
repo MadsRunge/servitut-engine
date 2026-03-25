@@ -31,6 +31,20 @@
 - [x] Nye produktionslogs viste, at worker-tråden stadig skrev til `st.session_state` inde fra `_extract_thread`; extract-siden bruger nu en `Queue` til cross-thread events/resultat, så kun hovedtråden skriver til Streamlit-state
 - [x] Verifikation: `.venv/bin/streamlit config show` viser nu de nye gyldige server-options uden warning om ukendt `pingTimeout`, `py_compile` på extract-siden passerer, og `.venv/bin/pytest tests/test_extraction_service.py -q` giver `18 passed`
 
+## Report run failure plan
+
+- [ ] Bekræft at `Ukendt fejl` på rapportgenerering kommer fra samme Streamlit-threading-mønster som extract
+- [ ] Refaktorér `8_Generate_Report.py` så worker-tråden ikke skriver til `st.session_state` direkte
+- [ ] Verificér rettelsen med syntaks- og relevante tests
+- [ ] Dokumentér hvad der er fikset, og hvad der stadig er separat `_stcore` routing-støj
+
+## Report run failure review
+
+- [x] Produktionsloggen viste samme mønster som extract: `_report_thread` udløste `missing ScriptRunContext` og UI'et faldt tilbage til `"Ukendt fejl"`, når resultatet ikke blev skrevet sikkert tilbage
+- [x] `streamlit_app/pages/8_Generate_Report.py` bruger nu en `Queue` til resultatoverlevering fra worker-tråden, så kun hovedtråden skriver til `st.session_state` og gemmer rapporten
+- [x] Verifikation: `py_compile` på rapport-siden passerer, og `.venv/bin/pytest tests/test_report_generation.py -q` giver `16 passed`
+- [x] `_stcore`-404 under `/Extract_Servitutter/...` er fortsat et separat routing/reconnect-symptom og ikke den direkte årsag til rapport-sidens `Ukendt fejl`
+
 ## Filter chunks transparency plan
 
 - [x] Kortlæg hvilke canonical felter fra tinglysningsattesten der faktisk bruges i chunk-scoring, og hvilke der i dag er skjult i UI

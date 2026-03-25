@@ -1,3 +1,4 @@
+from queue import Empty, Queue
 import sys
 import threading
 import time
@@ -109,15 +110,39 @@ if not servitutter:
 _RP_THREAD = "report_thread"
 _RP_RESULT = "report_result"
 _RP_START  = "report_start"
+_RP_QUEUE  = "report_queue"
+
+
+def _drain_report_messages() -> None:
+    message_queue = st.session_state.get(_RP_QUEUE)
+    if message_queue is None:
+        return
+
+    latest_result = st.session_state.get(_RP_RESULT)
+
+    while True:
+        try:
+            message = message_queue.get_nowait()
+        except Empty:
+            break
+
+        if message["type"] == "result":
+            latest_result = (message.get("report"), message.get("error"))
+
+    if latest_result is not None:
+        st.session_state[_RP_RESULT] = latest_result
 
 if _RP_THREAD in st.session_state:
     thread = st.session_state[_RP_THREAD]
+    _drain_report_messages()
     elapsed = int(time.time() - st.session_state[_RP_START])
     st.info(f"Genererer rapport... **{elapsed}s** forløbet")
     if not thread.is_alive():
+        _drain_report_messages()
         report, error = st.session_state.pop(_RP_RESULT, (None, "Ukendt fejl"))
         st.session_state.pop(_RP_THREAD)
         st.session_state.pop(_RP_START, None)
+        st.session_state.pop(_RP_QUEUE, None)
         if error:
             st.error(f"Fejl: {error}")
         else:
@@ -129,16 +154,24 @@ if _RP_THREAD in st.session_state:
         st.rerun()
 elif st.button("Generer redegørelse", type="primary"):
     all_chunks = storage_service.load_all_chunks(case.case_id)
+    result_queue: Queue = Queue()
+    st.session_state[_RP_QUEUE] = result_queue
 
-    def _report_thread(srvs=servitutter, chunks=all_chunks, c_id=case.case_id,
-                       tm=selected_matrikler, am=[m.matrikelnummer for m in case.matrikler],
-                       aod=as_of_date):
+    def _report_thread(
+        srvs=servitutter,
+        chunks=all_chunks,
+        c_id=case.case_id,
+        tm=selected_matrikler,
+        am=[m.matrikelnummer for m in case.matrikler],
+        aod=as_of_date,
+        message_queue=result_queue,
+    ):
         try:
             r = generate_report(srvs, chunks, c_id,
                                 target_matrikler=tm, available_matrikler=am, as_of_date=aod)
-            st.session_state[_RP_RESULT] = (r, None)
+            message_queue.put({"type": "result", "report": r, "error": None})
         except Exception as e:
-            st.session_state[_RP_RESULT] = (None, str(e))
+            message_queue.put({"type": "result", "report": None, "error": str(e)})
 
     t = threading.Thread(target=_report_thread, daemon=True)
     st.session_state[_RP_THREAD] = t
